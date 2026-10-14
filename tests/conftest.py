@@ -11,7 +11,7 @@ from core.container import Container
 from core.context import clear_log_context
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
-from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 
 # Shared mock world-building contract for tests that need a fully built world.
 # Single source of truth: schema changes to WorldBuilder/CastDesigner update here.
@@ -146,6 +146,7 @@ def mock_build_container(test_config: object) -> Container:
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=MOCK_WORLD_BUILDING_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=MOCK_CAST_DESIGN_RESPONSE)
     providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     providers[LLMScene.PERSONA_GENERATION] = MockLLMProvider(fixed_response="{}")
     providers[LLMScene.AGENT_ACTION_NARRATION] = MockLLMProvider(
         fixed_response=MOCK_ADJUDICATION_RESPONSE

@@ -44,6 +44,8 @@ llm:
       provider: kimi_pro
     ability_design:
       provider: kimi_pro
+    event_deck_design:
+      provider: kimi_pro
     world_building:
       provider: kimi_pro
       # Required. The 60s default can't cover the world build's "thousands of tokens of thinking and JSON"

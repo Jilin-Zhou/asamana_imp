@@ -687,6 +687,7 @@ class NarrativeApplication:
             event_settings=EventSettings(
                 core_tension=world.analysis.core_tension,
                 narrative_theme=world.analysis.narrative_theme,
+                deck=world.analysis.event_deck,
                 enabled=self._config.engine.event_system_enabled,
                 check_interval=self._config.engine.event_check_interval,
                 max_events_per_window=self._config.engine.max_events_per_window,

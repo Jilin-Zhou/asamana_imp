@@ -9,7 +9,7 @@ import pytest
 from agent.need import NeedType
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
-from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 from tuning.validation_need import _deterministic_checks, validate_need
@@ -71,6 +71,7 @@ async def test_validate_need_writes_checks_and_judge(container, test_config, tmp
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
     providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     providers[LLMScene.NEED_GOAL_GENERATION] = MockLLMProvider(fixed_response=_GOAL_RESPONSE)
     container.llm_router = LLMRouter(providers)
     world_id, _ = await run_build(container, test_config, "need-theme", template="changan_iso", sink=InMemoryTraceSink())

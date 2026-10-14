@@ -321,8 +321,10 @@ class LLMScene(str, Enum):
     # can run cheap; it also keeps map selection out of theme-analysis traces.
     WORLD_TEMPLATE_SELECTION = "world_template_selection"
     CAST_DESIGN = "cast_design"
-    # Rates the whole cast's attributes and skills in one call, after the personas exist.
+    # Rates the whole cast's attributes, skills and cash in one call, after the personas exist.
     ABILITY_DESIGN = "ability_design"
+    # Writes the world's event deck (engine.event_deck) at build.
+    EVENT_DECK_DESIGN = "event_deck_design"
     WORLD_PRESSURE = "world_pressure"
     AGENT_INTERRUPT_DECISION = "agent_interrupt_decision"
     # MEMORY_IMPORTANCE: scores a memory's importance [0,1] at write time; drives decay/retrieval/compression.

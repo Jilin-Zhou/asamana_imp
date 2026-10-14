@@ -8,7 +8,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
-from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 
@@ -42,6 +42,7 @@ async def test_run_build_records_phases_and_llm_calls(container, test_config) ->
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
     providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     container.llm_router = LLMRouter(providers)
 
     sink = InMemoryTraceSink()
@@ -57,6 +58,7 @@ async def test_run_build_records_phases_and_llm_calls(container, test_config) ->
         "world_build.cast_design",
         "world_build.agent_generation",
         "world_build.ability_design",
+        "world_build.event_deck",
         "world_build.initialization",
     }
     for p in sink.phases:

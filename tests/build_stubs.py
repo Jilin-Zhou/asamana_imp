@@ -29,3 +29,18 @@ MOCK_ABILITY_DESIGN_RESPONSE = json.dumps({
         },
     ],
 }, ensure_ascii=False)
+
+# EventDeckDesigner's reply: the minimum deck, one card that needs rain and one that needs night.
+MOCK_EVENT_DECK_RESPONSE = json.dumps({
+    "reason": "宫城内外，消息与天时都会自己生出事来。",
+    "cards": [
+        {"title": f"坊间传言{i}", "synopsis": f"坊间又起一则传言，第{i}则。", "scope": "local",
+         "severity": "low", "weight": 1, "sky": "any", "daypart": "any"}
+        for i in range(1, 11)
+    ] + [
+        {"title": "大雨冲垮坊墙", "synopsis": "连日大雨，一段坊墙塌了，路被堵住。", "scope": "local",
+         "severity": "medium", "weight": 2, "sky": "rain", "daypart": "any"},
+        {"title": "夜半宵禁", "synopsis": "金吾卫夜里加紧巡街，犯夜者被拿。", "scope": "global",
+         "severity": "medium", "weight": 1, "sky": "any", "daypart": "night"},
+    ],
+}, ensure_ascii=False)

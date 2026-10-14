@@ -92,6 +92,7 @@ BUILD_SCENE_ORDER: tuple[str, ...] = (
     "cast_design",
     "persona_generation",   # agent generation
     "ability_design",
+    "event_deck_design",
     "need_goal_generation",  # initializer: needs + opening goals
 )
 

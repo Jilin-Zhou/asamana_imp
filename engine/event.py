@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import random
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from agent.personality import SECRET_LABEL
@@ -45,6 +45,7 @@ from core.prompts import (
 )
 from core.logging import get_logger
 from engine.clock import WorldTime
+from engine.event_deck import EventCard, Scope, draw
 from engine.injection import (
     Author,
     BroadcastSpec,
@@ -57,6 +58,7 @@ from engine.injection import (
     parse_broadcast_spec,
     parse_message_spec,
 )
+from engine.weather import Sky
 from engine.world_mutation import EntityMutation, Mutation, SpawnMutation, parse_spawn
 
 if TYPE_CHECKING:
@@ -91,6 +93,8 @@ class _EventPlan:
     spawn: SpawnMutation | None = None
     alter: EntityMutation | None = None
     destroy: EntityMutation | None = None
+    # The deck card this plan realizes; empty when the editor's own gate chose to act.
+    card: str = ""
 
     @property
     def mutations(self) -> list[Mutation]:
@@ -108,6 +112,8 @@ class EventSettings:
 
     core_tension: str = ""
     narrative_theme: str = ""
+    # This world's event deck (see engine.event_deck); empty = the editor's gate alone decides.
+    deck: tuple[EventCard, ...] = ()
     enabled: bool = True
     max_events_per_window: int = 2
     quota_window: int = 20
@@ -258,6 +264,7 @@ class EventSystem:
         all_agents: Mapping[str, "Agent"],
         locations: Sequence["Place"],
         entities: Sequence["WorldEntity"],
+        sky: Sky | None = None,
     ) -> CommittedInjection | None:
         """The step loop's single event entry point: commit a finished background generation
         and return it, or start one and return None. Never blocks on the LLM.
@@ -267,8 +274,16 @@ class EventSystem:
         ready = await self._consume_ready(current_step, all_agents)
         if ready is not None:
             return ready
-        self._ensure_generation(current_step, world_time, world_id, all_agents, locations, entities)
+        self._ensure_generation(current_step, world_time, world_id, all_agents, locations, entities, sky)
         return None
+
+    def _cooling(self, current_step: int) -> set[str]:
+        """Cards drawn within the last two quota windows: a deck shouldn't repeat itself."""
+        since = current_step - 2 * self.settings.quota_window
+        return {
+            str(ev.metadata.get("card")) for ev in self._ledger.all()
+            if ev.triggered_step > since and ev.metadata.get("card")
+        }
 
     def _ensure_generation(
         self,
@@ -278,15 +293,20 @@ class EventSystem:
         all_agents: Mapping[str, "Agent"],
         locations: Sequence["Place"],
         entities: Sequence["WorldEntity"],
+        sky: Sky | None = None,
     ) -> None:
         """If eligible and nothing is in flight, start "gate + plan generation" in the
-        background, off the step loop's critical path."""
+        background, off the step loop's critical path. A card drawn here replaces the gate."""
         if self._inflight is not None:
             return
         if not self._passes_rule_check(current_step):
             return
+        card = draw(
+            self.settings.deck, seed=world_id, step=current_step, sky=sky,
+            hour=world_time.hour_of_day, cooling=self._cooling(current_step),
+        )
         self._inflight = asyncio.create_task(
-            self._generate_plan(current_step, world_time, world_id, all_agents, locations, entities)
+            self._generate_plan(current_step, world_time, world_id, all_agents, locations, entities, card)
         )
 
     async def _consume_ready(
@@ -319,14 +339,15 @@ class EventSystem:
         all_agents: Mapping[str, "Agent"],
         locations: Sequence["Place"],
         entities: Sequence["WorldEntity"],
+        card: EventCard | None = None,
     ) -> "_EventPlan | None":
         """Gate + generation, returning a plan or None. No side effects: committing lives in
-        _commit_plan, keeping background execution apart from deterministic consumption."""
+        _commit_plan, keeping background execution apart from deterministic consumption.
+        A drawn card skips the gate: the dice already decided something happens."""
         narrative_summary = await self._build_narrative_summary(
             world_id, current_step, all_agents
         )
-        should_inject = await self._passes_llm_check(world_time, narrative_summary)
-        if not should_inject:
+        if card is None and not await self._passes_llm_check(world_time, narrative_summary):
             return None
         return await self._generate_event_plan(
             current_step=current_step,
@@ -335,6 +356,7 @@ class EventSystem:
             all_agents=all_agents,
             locations=locations,
             entities=entities,
+            card=card,
         )
 
     async def _commit_plan(
@@ -356,6 +378,8 @@ class EventSystem:
             is_positive=plan.is_positive,
         )
         if committed is not None:
+            if plan.card:
+                committed.event.metadata["card"] = plan.card
             self._ledger.record(committed.event)
         return committed
 
@@ -624,9 +648,11 @@ class EventSystem:
         all_agents: Mapping[str, "Agent"],
         locations: Sequence["Place"],
         entities: Sequence["WorldEntity"],
+        card: EventCard | None = None,
     ) -> _EventPlan | None:
         """The LLM generates an event and declares its channels (spawn / alter / destroy /
-        broadcast / message).
+        broadcast / message). With a drawn ``card``, what happens is set and the LLM decides
+        whom it lands on, where and in what words.
 
         The editor sees beyond where people stand: the menu is every occupied place plus some
         places elsewhere (``_menu_places``), and the unheld things on them. Only plan generation gets it; the gate judges pacing, which the map doesn't change.
@@ -688,7 +714,9 @@ class EventSystem:
    所以提到将来的时点时:
 {ABSOLUTE_TIME_RULE}
 
-【任务】设计最能推动当前叙事的一件事,选用下面的通道(至少一个,可组合):
+【任务】设计最能推动当前叙事的一件事,选用下面的通道(至少一个,可组合)。
+若下方给了【抽中的事】,这一拍要发生的就是它:照它的梗概与范围让它落地,由你决定落在谁身上、在哪里、怎么说出来,
+不另起炉灶,也不把它写得比所给的烈度更大或更小。
 - spawn:在某个地点放下一件世界里原本没有的东西。它会真实存在于那里,在场的人看得见。
 - alter:改变「地上的东西」名单里一件东西的状态、样子或上面写的内容。
 - destroy:毁掉「地上的东西」名单里的一件。
@@ -745,7 +773,7 @@ observation 只写这件东西本身看得见的变化，不写哪些人看到;
 {entity_lines}
 
 {narrative_summary}
-
+{self._card_block(card)}
 依上面说定的 JSON 格式设计事件（reason 在前），只输出 JSON、不写任何多余内容。"""
 
         try:
@@ -790,6 +818,8 @@ observation 只写这件东西本身看得见的变化，不写哪些人看到;
         if plan is None:
             logger.warning("event_plan_invalid", extra={"step": current_step})
             return None
+        if card is not None:
+            plan = replace(plan, card=card.title)
         if plan.broadcast is None and plan.message is None and not plan.mutations:
             logger.warning("event_plan_no_valid_channel", extra={"step": current_step})
             return None
@@ -821,6 +851,18 @@ observation 只写这件东西本身看得见的变化，不写哪些人看到;
             alter=_parse_alter(data.get("alter"), entity_ref),
             destroy=_parse_destroy(data.get("destroy"), entity_ref),
         )
+
+    @staticmethod
+    def _card_block(card: EventCard | None) -> str:
+        """The drawn happening, at the end of the input, nearest the generation point."""
+        if card is None:
+            return ""
+        reach = "全世界都会知道" if card.scope is Scope.GLOBAL else "发生在某一处"
+        return f"""
+【抽中的事】
+- {card.title}：{card.synopsis}
+- 范围：{reach}；烈度：{card.severity.value}
+"""
 
     def _person_line(self, agent: "Agent") -> str:
         soul = agent.personality.soul

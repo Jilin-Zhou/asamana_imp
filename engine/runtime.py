@@ -359,6 +359,7 @@ class NarrativeRuntime:
                 all_agents=agents_dict,
                 locations=self._environment.space.all_places(),
                 entities=self._environment.all_live_entities(),
+                sky=self._weather.weather.sky if self._weather is not None else None,
             )
         # Reap whoever an injection just killed, before anything acts this step: otherwise the
         # dead keep ticking their actions, get interrupt calls and complete talks until the

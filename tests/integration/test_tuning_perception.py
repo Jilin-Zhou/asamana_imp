@@ -8,7 +8,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
-from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 from tuning.validation_perception import (
@@ -63,6 +63,7 @@ async def test_validate_perception_writes_checks_and_diff(container, test_config
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
     providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     container.llm_router = LLMRouter(providers)
     world_id, _ = await run_build(container, test_config, "perc-theme", template="changan_iso", sink=InMemoryTraceSink())
 

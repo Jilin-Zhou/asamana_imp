@@ -19,6 +19,7 @@ from core.interfaces.snapshot import WorldSnapshot
 from core.interfaces.world_config import WorldConfig
 from core.text import slugify
 from engine.clock import WorldTimeConfig
+from engine.event_deck import EventCard, deck_from_dicts
 from engine.weather import DEFAULT_CLIMATE, Climate, WeatherSystem
 
 if TYPE_CHECKING:
@@ -557,6 +558,8 @@ class ThemeAnalysis:
     climate: Climate = DEFAULT_CLIMATE
     # What money is called and what things cost; empty for a world without money.
     economy: Economy = field(default_factory=Economy)
+    # Happenings this world is prone to, drawn by the event editor (engine.event_deck).
+    event_deck: tuple[EventCard, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -576,6 +579,7 @@ class ThemeAnalysis:
             "source_material": self.source_material,
             "climate": self.climate.value,
             "economy": self.economy.to_dict(),
+            "event_deck": [card.to_dict() for card in self.event_deck],
         }
 
     @classmethod
@@ -634,6 +638,7 @@ class ThemeAnalysis:
             source_material=data.get("source_material", ""),
             climate=coerce_enum(Climate, data.get("climate"), default=DEFAULT_CLIMATE),
             economy=Economy.from_dict(data.get("economy")),
+            event_deck=deck_from_dicts(data.get("event_deck") or []),
         )
 
 
