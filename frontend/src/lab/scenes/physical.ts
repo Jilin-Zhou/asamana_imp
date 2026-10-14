@@ -65,6 +65,43 @@ export function buildPhysicalScenes({ open: OPEN }: LabPlaces): LabScene[] {
       ],
     },
     {
+      id: "strike-costly",
+      group: "动手",
+      title: "strike · 击（有代价的成功，带判定）",
+      watch:
+        "地图上与「击（成功）」一样命中。叙事流里这张卡要有琥珀色「🎲 有代价的成功」标签，" +
+        "不再另挂「未果」；结果下方一行写出判定：困难 · 略占优势 · 4+5+3 +2 = 14 / 14 与评估理由。",
+      steps: [
+        step({ states: [who(MO, OPEN), who(SHI, OPEN)] }),
+        step({
+          states: [
+            who(MO, OPEN, { emotion: Emotion.anger, emotion_valence: -0.5, vitality: 0.9 }),
+            who(SHI, OPEN, { vitality: 0.7, emotion: Emotion.fear, emotion_valence: -0.6 }),
+          ],
+          actions: [
+            did(MO, {
+              action_type: ActionType.physical,
+              deed: Deed.strike,
+              target: aimAgents(SHI.id),
+              action_description: "挥拳打向阿石的肩头。",
+              outcome: `在${OPEN.name}，阿墨一拳打中阿石的肩头，自己的手腕也扭了一下。`,
+              check: {
+                difficulty: "hard",
+                edge: "better",
+                pure_chance: false,
+                dice: [4, 5, 3],
+                dc: 14,
+                modifier: 2,
+                total: 14,
+                tier: "costly_success",
+                reason: "阿石有防备且身形灵活，阿墨力气更大、先出手",
+              },
+            }),
+          ],
+        }),
+      ],
+    },
+    {
       id: "restrain",
       group: "动手",
       title: "restrain · 擒",

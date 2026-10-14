@@ -41,10 +41,13 @@ def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, A
         # Some checks branch on type (e.g. "accepted or not" only applies to errands); without it they'd have to guess.
         "action_type": getattr(r.action.action_type, "value", str(r.action.action_type)),
         "outcome": r.outcome,
-        "observation": r.observation,
+        # Every place's onlooker text, joined: the validators scan it as one string.
+        "observation": "\n".join(o.text for o in r.observations),
         "succeeded": r.succeeded,
         "failure_reason": r.failure_reason,
         "detected": r.detected,
+        # The roll behind ``succeeded``; code layer, shown to the reviewer, never to an agent.
+        "check": r.check.to_dict() if r.check is not None else None,
         "factual_memory": r.factual_memory,
         "dialogue": list(r.dialogue),
         "vitality_damage": r.vitality_damage,

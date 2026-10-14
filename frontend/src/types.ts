@@ -90,6 +90,23 @@ export interface ActionTarget {
   reaches: TargetRef[];
 }
 
+/**
+ * The roll a result was narrated from (backend interaction/models.py CheckView): simulation facts
+ * in the engine's vocabulary, numbers spelled out. Only the observer ever sees these numbers; no
+ * agent does. Read the enums through lib/contract and the words through lib/check.
+ */
+export interface CheckView {
+  difficulty: string; // lib/contract Difficulty
+  edge: string; // lib/contract Edge; "even" when pure_chance
+  pure_chance: boolean;
+  dice: number[];
+  dc: number;
+  modifier: number;
+  total: number;
+  tier: string; // lib/contract CheckTier
+  reason: string; // the assessor's rationale, third person and god-view
+}
+
 export interface ActionSummary {
   agent_id: string;
   agent_name: string;
@@ -147,6 +164,9 @@ export interface ActionSummary {
   inner_monologue: string;
   is_main_character: boolean;
   dialogue: DialogueTurn[];
+  // The roll behind `succeeded`; null when nothing was rolled (no doubt, or a type that never
+  // rolls).
+  check: CheckView | null;
   // Monotonic emission ordinal from the runtime — sort intra-step events by this,
   // never render it as user-visible text. 0 for initialization records.
   seq: number;

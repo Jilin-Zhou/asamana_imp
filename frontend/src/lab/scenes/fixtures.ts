@@ -259,6 +259,7 @@ export function did(
     inner_monologue: "",
     is_main_character: actor.main,
     dialogue: [],
+    check: null,
     seq: nextSeq(),
     ...over,
     // As the backend's ActionResult: the gist defaults to the outcome.

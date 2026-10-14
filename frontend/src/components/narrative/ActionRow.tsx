@@ -1,8 +1,11 @@
-import { ActionType, Phase, actedOnAgents, claimedAgents } from "../../lib/contract";
+import {
+  ActionType, CheckTier, type CheckTierValue, Phase, actedOnAgents, claimedAgents,
+} from "../../lib/contract";
 import { avatarStyle } from "../../lib/avatar";
+import { checkArithmetic, checkStakes, tierLabel } from "../../lib/check";
 import type { ActionSummary, DialogueTurn, EntityView } from "../../types";
 import type { StepCast } from "./cast";
-import { metaOf } from "./meta";
+import { TIER_CHIP, metaOf } from "./meta";
 import Who from "./Who";
 
 // Fallback palette for a speaker the world carries no identity color for — per
@@ -16,6 +19,9 @@ const SPEAKER_COLORS = [
   "text-sky-300",
   "text-fuchsia-300",
 ];
+
+// The tiers that are themselves a failure, so the header needs no separate 未果.
+const FAILING_TIERS: ReadonlySet<string> = new Set([CheckTier.failure, CheckTier.critical_failure]);
 
 function Conversation({ turns, cast }: { turns: DialogueTurn[]; cast: StepCast }) {
   const speakers = [...new Set(turns.map((t) => t.speaker).filter(Boolean))];
@@ -115,6 +121,10 @@ export default function ActionRow({
   // not_executed: the act never engaged the world (target absent/busy, no path). A non-event,
   // so the whole card recedes rather than looking like a deed with a gray badge.
   const nonEvent = act.not_executed && !isInterrupt;
+  // A rolled result names its tier in the header. Not on an interrupt: a roll there only said
+  // whether he was seen leaving, and "成功" on a cut-short act would read as its result.
+  const tierShown = !!act.check && !isInterrupt;
+  const rolledFailure = tierShown && FAILING_TIERS.has(act.check!.tier);
   // A talk's result is the conversation itself, rendered structurally below — so its
   // outcome (gist + verbatim transcript) must never become prose.
   const spokenFor = act.action_type === ActionType.talk && turns.length > 0;
@@ -236,11 +246,24 @@ export default function ActionRow({
             未成事
           </span>
         ) : (
-          act.succeeded === false && !isInterrupt && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-rose-300 bg-rose-950/50 border border-rose-900/60">
-              未果
-            </span>
-          )
+          <>
+            {tierShown && (
+              <span
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${
+                  TIER_CHIP[act.check!.tier as CheckTierValue] ?? TIER_CHIP.failure
+                }`}
+              >
+                🎲 {tierLabel(act.check!)}
+              </span>
+            )}
+            {/* A failed tier already says it. A good roll can still come to nothing: a covert
+                watch in a room where nothing happened. */}
+            {act.succeeded === false && !isInterrupt && !rolledFailure && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-rose-300 bg-rose-950/50 border border-rose-900/60">
+                未果
+              </span>
+            )}
+          </>
         )}
         {/* Was he seen: a covert act's second question, independent of 未果, so amber
             rather than rose. Only COVERT sets it, and only being noticed gets a mark. */}
@@ -320,6 +343,14 @@ export default function ActionRow({
         <p className="mt-1.5 text-[13px] leading-relaxed text-rose-400/80">
           <span className="text-rose-500/70">✗ </span>
           {act.failure_reason}
+        </p>
+      )}
+      {/* The roll behind the result: what it was against, the dice, and the assessor's why. */}
+      {act.check && (
+        <p className="mt-1.5 text-[12px] leading-relaxed text-slate-500">
+          <span className="text-slate-600">🎲 </span>
+          {checkStakes(act.check)} · {checkArithmetic(act.check)}
+          {act.check.reason && <span className="text-slate-600"> · {act.check.reason}</span>}
         </p>
       )}
     </div>

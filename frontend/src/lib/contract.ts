@@ -60,6 +60,34 @@ export const Deed = {
 } as const;
 export type DeedValue = typeof Deed[keyof typeof Deed];
 
+// A check's three closed sets; mirror core.interfaces.check (Difficulty, Edge, CheckTier).
+export const Difficulty = {
+  easy:      "easy",
+  normal:    "normal",
+  hard:      "hard",
+  very_hard: "very_hard",
+} as const;
+export type DifficultyValue = typeof Difficulty[keyof typeof Difficulty];
+
+export const Edge = {
+  much_worse:  "much_worse",
+  worse:       "worse",
+  even:        "even",
+  better:      "better",
+  much_better: "much_better",
+} as const;
+export type EdgeValue = typeof Edge[keyof typeof Edge];
+
+// COSTLY_SUCCESS is a success: it landed, at a price the outcome names.
+export const CheckTier = {
+  critical_success: "critical_success",
+  success:          "success",
+  costly_success:   "costly_success",
+  failure:          "failure",
+  critical_failure: "critical_failure",
+} as const;
+export type CheckTierValue = typeof CheckTier[keyof typeof CheckTier];
+
 // What a target ref may name: routing vocabulary the backend derives from which slot a decision
 // bound (never from an LLM), so the renderer can tell a person from a place from a thing.
 export const RefKind = {

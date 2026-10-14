@@ -102,6 +102,10 @@ def _phase_block(inputs: dict[str, Any], outputs: dict[str, Any]) -> str:
 def _result_line(r: dict[str, Any]) -> str:
     who = f"[{r.get('actor')}视角] " if r.get("actor") else ""
     parts = [f"{who}succeeded={r.get('succeeded')}"]
+    # A rolled result's success was the dice's call, not the narrator's: grade the narration
+    # against the tier it was handed.
+    if check := r.get("check"):
+        parts.append(f"判定={check.get('tier')}({check.get('difficulty')},{check.get('edge')})")
     if r.get("failure_reason"):
         parts.append(f"why={r['failure_reason']}")
     out = (r.get("outcome") or "").replace("\n", " ")
