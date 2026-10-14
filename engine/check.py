@@ -58,10 +58,12 @@ def roll_check(
     )
 
 
-#: How each tier is told to a third-person functional judge narrating it. A cost or a mess must
-#: be written out concretely: "succeeded at some cost" with nothing named is the tier wasted.
+#: How each tier is told to a third-person functional judge narrating it. A windfall, a cost or a
+#: mess must be written out concretely: naming the tier without saying what it was wastes it.
 _THIRD_PERSON_PHRASES: dict[CheckTier, str] = {
-    CheckTier.CRITICAL_SUCCESS: "做成了，而且做得超出预期——比他想要的还要好",
+    CheckTier.CRITICAL_SUCCESS: (
+        "做成了，而且比他想要的还要好——据材料写出好在哪里，不要只写一句「超出预期」"
+    ),
     CheckTier.SUCCESS:          "做成了",
     CheckTier.COSTLY_SUCCESS:   (
         "做成了，但付出了代价或留下了隐患——据材料写出具体是什么"
@@ -76,7 +78,7 @@ _THIRD_PERSON_PHRASES: dict[CheckTier, str] = {
 
 #: The same tiers in the actor's own voice, for in-character narration (WORK).
 _FIRST_PERSON_PHRASES: dict[CheckTier, str] = {
-    CheckTier.CRITICAL_SUCCESS: "我做成了，而且比我想要的还要好",
+    CheckTier.CRITICAL_SUCCESS: "我做成了，而且比我想要的还要好——我要写清好在哪里",
     CheckTier.SUCCESS:          "我做成了",
     CheckTier.COSTLY_SUCCESS:   "我做成了，但留下了瑕疵或付出了代价——我要写清是什么，不一笔带过",
     CheckTier.FAILURE:          "我没做成",
