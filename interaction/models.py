@@ -992,3 +992,83 @@ def _agent_state_payload(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]
     }
 
 
+
+
+@dataclass(frozen=True)
+class NarrationBeat:
+    """One beat of a scene. ``narration`` is the narrator's prose; ``line`` and ``aside`` quote
+    the record verbatim (a line said aloud, an inner monologue), with the speaker named."""
+
+    kind: str          # narration / line / aside
+    text: str
+    speaker_id: str = ""   # code layer — the join key; never rendered
+    speaker: str = ""      # narrative layer — the name to print
+
+
+@dataclass(frozen=True)
+class NarrationCastMember:
+    agent_id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class NarrationScene:
+    """One place's scene in one step. ``scene`` numbers scenes across the world; ``continues``
+    says this step carries on the scene of the same number from the step before."""
+
+    scene: int
+    continues: bool
+    location_id: str
+    location_name: str
+    stage_direction: str
+    cast: list[NarrationCastMember] = field(default_factory=list)
+    beats: list[NarrationBeat] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StepNarration:
+    """The stage narrator's script for one step (``engine.stage_narrator``): written for the
+    audience only, never read back by the simulation. ``opens_act`` marks the first step of act
+    ``act``; ``memo`` is the running synopsis at this point."""
+
+    step: int
+    act: int
+    opens_act: bool
+    time_label: str
+    memo: str = ""
+    scenes: list[NarrationScene] = field(default_factory=list)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "StepNarration":
+        data = coerce_dict(payload)
+        return cls(
+            step=int(coerce_optional_int(data.get("step")) or 0),
+            act=int(coerce_optional_int(data.get("act")) or 0),
+            opens_act=bool(data.get("opens_act", False)),
+            time_label=str(data.get("time_label") or ""),
+            memo=str(data.get("memo") or ""),
+            scenes=[
+                NarrationScene(
+                    scene=int(coerce_optional_int(s.get("scene")) or 0),
+                    continues=bool(s.get("continues", False)),
+                    location_id=str(s.get("location_id") or ""),
+                    location_name=str(s.get("location_name") or ""),
+                    stage_direction=str(s.get("stage_direction") or ""),
+                    cast=[
+                        NarrationCastMember(agent_id=str(c.get("agent_id") or ""), name=str(c.get("name") or ""))
+                        for c in (coerce_dict(item) for item in coerce_list(s.get("cast")))
+                    ],
+                    beats=[
+                        NarrationBeat(
+                            kind=str(b.get("kind") or ""),
+                            text=str(b.get("text") or ""),
+                            speaker_id=str(b.get("speaker_id") or ""),
+                            speaker=str(b.get("speaker") or ""),
+                        )
+                        for b in (coerce_dict(item) for item in coerce_list(s.get("beats")))
+                        if b.get("text")
+                    ],
+                )
+                for s in (coerce_dict(item) for item in coerce_list(data.get("scenes")))
+            ],
+        )

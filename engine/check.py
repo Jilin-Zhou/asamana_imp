@@ -86,6 +86,20 @@ _FIRST_PERSON_PHRASES: dict[CheckTier, str] = {
 }
 
 
+#: The tier as a bare fact, for a reader who only reports results (the stage narrator).
+_TIER_GISTS: dict[CheckTier, str] = {
+    CheckTier.CRITICAL_SUCCESS: "做得比想要的还好",
+    CheckTier.SUCCESS:          "做成了",
+    CheckTier.COSTLY_SUCCESS:   "做成了，但付出了代价",
+    CheckTier.FAILURE:          "没做成",
+    CheckTier.CRITICAL_FAILURE: "不但没做成，还弄糟了",
+}
+
+
+def tier_gist(tier: CheckTier) -> str:
+    return _TIER_GISTS[tier]
+
+
 def tier_phrase(tier: CheckTier, *, voice: SituationVoice) -> str:
     """The tier in words, the only form in which a check reaches a prompt."""
     phrases = _FIRST_PERSON_PHRASES if voice == SituationVoice.FIRST else _THIRD_PERSON_PHRASES

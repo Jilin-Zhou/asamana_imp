@@ -330,6 +330,9 @@ class LLMScene(str, Enum):
     # Periodic relation-label evolution: re-assess a relation's labels from recent memory; outputs a
     # full replacement list.
     RELATION_LABEL_EVOLUTION = "relation_label_evolution"
+    # The stage narrator: writes each step up as a scene for the audience. Its own scene so it can
+    # route to a model chosen for prose; nothing it writes feeds back into the simulation.
+    STAGE_NARRATION = "stage_narration"
 
 
 @dataclass

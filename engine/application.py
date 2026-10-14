@@ -717,6 +717,7 @@ class NarrativeApplication:
             trace_sink=self._container.trace_sink,
             start_event_seq=start_event_seq,
             fired_events=fired_events or (),
+            narration_enabled=self._config.engine.narration_enabled,
         )
         return runtime
 

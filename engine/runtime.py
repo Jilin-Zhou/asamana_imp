@@ -44,6 +44,7 @@ from engine.message_system import MessageDelivery, MessageSystem
 from engine.npc_runner import NpcRunner
 from engine.run_control import RunController
 from engine.scheduler import AgentScheduler, StepExecutionPlan
+from engine.stage_narrator import StageNarrator, StepMaterial
 from core.interfaces.llm import LLMRouter
 from engine.world_pressure import WorldPressureEvaluator
 if TYPE_CHECKING:
@@ -95,6 +96,7 @@ class NarrativeRuntime:
         trace_sink: TraceSink | None = None,
         start_event_seq: int = 0,
         fired_events: Iterable[Mapping[str, Any]] = (),
+        narration_enabled: bool = False,
     ) -> None:
         self._world_id = world_id
         self._clock = clock
@@ -198,6 +200,17 @@ class NarrativeRuntime:
         fired = list(fired_events)
         self._event_system.restore_state(fired)
         self._director.restore_state(fired)
+        # Writes each finished step up for the audience, off the step loop; reads records only.
+        self._narrator: StageNarrator | None = (
+            StageNarrator(
+                world_id=world_id,
+                llm_router=llm_router,
+                snapshot_provider=snapshot_provider,
+                event_bus=event_bus,
+                directory=directory,
+            )
+            if narration_enabled else None
+        )
 
     @property
     def director(self) -> DirectorChannel:
@@ -279,9 +292,11 @@ class NarrativeRuntime:
         """Called when the world actually shuts down (session destroyed/reset), not per run return.
 
         Handles only the cross-step state that run()'s finally deliberately leaves alone: the
-        in-flight event-generation task.
+        in-flight event-generation task and the narrator's queue.
         """
         await self._event_system.aclose()
+        if self._narrator is not None:
+            await self._narrator.aclose()
 
     async def run_step(self, agents: List[Agent]) -> RuntimeStepResult:
         step_start = time.perf_counter()
@@ -698,6 +713,15 @@ class NarrativeRuntime:
             "environment": self._environment.snapshot_state(),
         }
         self._event_bus.publish(step_event)
+        if self._narrator is not None:
+            self._narrator.submit(StepMaterial(
+                step=step,
+                time_label=world_time.time_label,
+                day=world_time.total_days,
+                actions=all_action_records,
+                events=serialized_events,
+                broadcasts=broadcast_records,
+            ))
 
         tick_narratives = [r["outcome"] for r in tick_records]
         step_elapsed_ms = (time.perf_counter() - step_start) * 1000.0
