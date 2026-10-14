@@ -388,7 +388,8 @@ async def run_action(
     name_by_id = world.directory.all_agent_names()
     id_by_name = {v: k for k, v in name_by_id.items()}
     registry = build_default_registry(
-        traced_container.llm_router, world.directory, seconds_per_step=world.clock_config.seconds_per_step)
+        traced_container.llm_router, world.directory,
+        seconds_per_step=world.clock_config.seconds_per_step, check_seed=world_id)
     message_system = MessageSystem(traced_container.message_provider, world_id=world_id)
 
     await apply_action_scene(scenario or {}, world, run_step, id_by_name)

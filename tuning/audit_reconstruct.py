@@ -401,6 +401,9 @@ def _fold_action(s: dict[str, Any], c: StageCall, out: dict, agent_name: str) ->
         _append(s, "acted_upon", au)
     fields = {k: out.get(k) for k in
               ("outcome", "fact", "dialogue", "success", "achieved", "detected") if k in out}
+    # A checked action's result is decided by the roll, not by anything in the judge's output.
+    if tier := c.extra.get("check_tier"):
+        fields["check_tier"] = tier
     if fields:
         whose = {k: v for k, v in (("did", c.extra.get("action_description")),
                                    ("initiator", c.extra.get("action_initiator")),

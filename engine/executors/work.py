@@ -9,6 +9,7 @@ from core.context import GivenFacts, annotate_call
 from core.interfaces.action import (
     ActionTarget, ActionResult, ActionType, AgentAction, EntitySpawn, EntityStateChange,
 )
+from core.interfaces.check import CheckTier
 from core.interfaces.directory import WorldDirectory
 from core.interfaces.llm import (
     IndexedRef, LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget,
@@ -24,6 +25,7 @@ from core.prompts import (
 )
 from core.duration import describe_duration
 from core.interfaces.execution import TickResult
+from engine.check import CheckAssessor, tier_phrase
 from engine.executors.base import ActionExecutionState, ActionExecutor
 from engine.narration import (
     ensure_actor_named, format_interrupt_reason_3p, format_interrupt_thought, observed_here,
@@ -42,7 +44,7 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class _WorkVerdict:
-    """Everything one WORK self-assessment produces, one piece per channel, from one LLM call.
+    """Everything one WORK narration produces, one piece per channel, from one LLM call.
 
     "What part still isn't done" lives in 1p ``fact``, not ``failure_reason`` (3p, empty on
     success): "mostly done, one part missing" is the common case, and the residue judge reads it
@@ -80,15 +82,23 @@ class WorkExecutor(ActionExecutor):
     """Executor for WORK actions: finishing something of one's own, with no external object
     and no relation delta.
 
-    Judged in character, first person: with no opponent, it's an honest self-assessment. It
-    must rest on what the actor perceives (things at hand, who's present, his
-    ``expected_outcome``): from persona alone the verdict is always "nothing came of it" and the
-    goal is retried forever.
+    A check settles how it went (``engine.check``); the actor then writes it in character, first
+    person. The account must rest on what the actor perceives (things at hand, who's present, his
+    ``expected_outcome``): from persona alone it is always "nothing came of it" and the goal is
+    retried forever.
     """
 
-    def __init__(self, llm_router: LLMRouter, directory: WorldDirectory, seconds_per_step: int = 3600) -> None:
+    def __init__(
+        self,
+        llm_router: LLMRouter,
+        directory: WorldDirectory,
+        *,
+        check_assessor: CheckAssessor,
+        seconds_per_step: int = 3600,
+    ) -> None:
         self._llm = llm_router
         self._directory = directory
+        self._checks = check_assessor
         self._seconds_per_step = seconds_per_step
 
     def _outcome(self, agent_id: str, purpose: str, location: str, *, succeeded: bool) -> str:
@@ -180,18 +190,37 @@ class WorkExecutor(ActionExecutor):
             # takes PHYSICAL first (half of the WORK/PHYSICAL boundary).
             split_own_entities=True,
         )
-        gen_result = await self._generate_outcome(
-            agent=agents.get(state.initiator_id),
-            purpose=state.purpose,
-            in_hand=scene.own_entities,
-            now_step=step,
-            duration_label=describe_duration(state.estimated_steps, self._seconds_per_step),
-            location=location,
-            situation_header=situation_header,
-            scene=scene.text,
-            expected_outcome=state.expected_outcome,
+        agent = agents.get(state.initiator_id)
+        duration_label = describe_duration(state.estimated_steps, self._seconds_per_step)
+        check = (
+            await self._checks.assess(
+                agent, action_type=ActionType.WORK, intent=state.purpose,
+                # The assessor is a functional judge: third person, god view.
+                scene=assemble_scene_context(
+                    state.initiator_id, environment=environment, directory=self._directory,
+                    agents=agents, visibility=SceneVisibility.GOD, reveal_intents=False,
+                ).text,
+                step=step, expected_outcome=state.expected_outcome,
+                details=f"\n- 投入时间：{duration_label}",
+            )
+            if agent is not None else None
         )
-        if gen_result is None:
+        gen_result = (
+            await self._generate_outcome(
+                agent=agent,
+                tier=check.tier,
+                purpose=state.purpose,
+                in_hand=scene.own_entities,
+                now_step=step,
+                duration_label=duration_label,
+                location=location,
+                situation_header=situation_header,
+                scene=scene.text,
+                expected_outcome=state.expected_outcome,
+            )
+            if check is not None else None
+        )
+        if check is None or gen_result is None:
             return [self._adjudication_failed_result(
                 purpose=state.purpose, step=step, agent_id=state.initiator_id,
                 estimated_steps=state.estimated_steps, expected_outcome=state.expected_outcome,
@@ -257,9 +286,10 @@ class WorkExecutor(ActionExecutor):
             happening=outcome,          # what close watching catches: the product observation omits
             succeeded=gen_result.succeeded,
             failure_reason=gen_result.failure_reason,   # 3p authoritative "why it didn't work"
-            factual_memory=gen_result.fact,             # 1p self-assessed memory
+            factual_memory=gen_result.fact,             # 1p in-character memory
             entity_spawns=spawns,
             entity_state_changes=changes,
+            check=check.record,
         )]
 
     async def interrupt(
@@ -366,7 +396,7 @@ class WorkExecutor(ActionExecutor):
             outcome=outcome,            # 3p full record (who, where, what, interrupted)
             gist=gist,
             succeeded=False,
-            factual_memory=factual,     # 1p self-assessed memory
+            factual_memory=factual,     # 1p in-character memory
         )]
 
     def _adjudication_failed_result(
@@ -395,6 +425,7 @@ class WorkExecutor(ActionExecutor):
         self,
         *,
         agent: "Agent | None",
+        tier: CheckTier,
         purpose: str,
         duration_label: str,
         now_step: int = 0,
@@ -404,8 +435,8 @@ class WorkExecutor(ActionExecutor):
         expected_outcome: str = "",
         in_hand: "tuple[WorldEntity, ...]" = (),  # index → item, same list as the scene line
     ) -> "_WorkVerdict | None":
-        """Adjudicate a finished WORK (1p fact, 3p outcome, why) in one call. Returns ``None``
-        when adjudication can't happen, so the caller fabricates nothing.
+        """Narrate a finished WORK of a settled ``tier`` (1p fact, 3p outcome, why) in one call.
+        Returns ``None`` when adjudication can't happen, so the caller fabricates nothing.
 
         All three inputs are needed: ``scene`` (what's at hand, who's present),
         ``expected_outcome`` (a reference, not a gate: the decision LLM often writes downstream
@@ -420,16 +451,16 @@ class WorkExecutor(ActionExecutor):
 
         header_part = f"{situation_header}\n\n" if situation_header else ""
         system = """\
-我此刻代入这个角色,以第一人称「我」自评我刚做完的事——这是我一贯的记事方式,与处境无关。
+我此刻代入这个角色,以第一人称「我」记下我刚做完的事——这是我一贯的记事方式,与处境无关。
 
 【我要做的】
-1. 先说清这段工夫我**实际做出了什么**:手上真正出来的东西、或推进到了哪一步。
-2. 再据它判一件事:**我这个动作的意图,达成了没有。**
+这件事做得怎样,**已经定了**(见最后的【这一回的结果】):那是既成的事实,我照着它记,不改判,也不含糊。
+我要说清这段工夫我**实际做出了什么**:手上真正出来的东西、或推进到了哪一步——要和那个结果对得上。
 
-【我据以判断的】
+【我据以落笔的】
 - 手边的东西:所给现场列出的是这里稀罕、特定或会有人争的东西,这类东西没列出就是没有;其中标了「由…持有」的在别人手上,不是我可以径直取用的。
 - 此刻与我同处一地的人:他们不会主动来影响我,但他们在场本身可能使我受到影响。
-- 我的本事、此刻的精力与情绪:做事的水准由它们定。
+- 我的本事、此刻的精力与情绪:事情具体做成什么样,由它们和那个结果一起定。
 - 我出发时想要的:只作参照,用来衡量我实际做出来的东西。
 
 【我不能做的】
@@ -445,7 +476,6 @@ class WorkExecutor(ActionExecutor):
 【我要写的】
 - fact:第一人称,我自己记下的这一场——做出了什么、成果是什么，如果有新东西产生也需要在这里点明;若有没了结的部分或压根没做成的,
   一并说清缘由。
-- success:上面第 2 步的判断。
 - updated_index / updated_name / updated_state / updated_desc / updated_content:这一场我
   **动到了手上哪一件东西**,它又变成了什么样。先在所给现场「我手上的东西」那一行里指出是哪一件
   (填它的序号),再写它经这一场之后的名字、所属状态、现在的样子
@@ -480,14 +510,14 @@ class WorkExecutor(ActionExecutor):
 - outcome:把 fact 用第三人称说出来,点名我的名字。
 - observation:换一个站在旁边的人来看,他看得见的是什么。他看得见我在忙什么、忙成没忙成,
   但只看得到表面、看不到内在;什么都看不见的就不写,别把 outcome 抄一遍。
-- why:没做成时,第三人称一句缘由,**只写旁人可陈述的**(所需的东西不齐、时候不够、有人在跟前);
+- why:这一回没做成时,第三人称一句缘由,**只写旁人可陈述的**(所需的东西不齐、时候不够、有人在跟前);
   我的懊丧、恐惧、焦虑这些只属于我自己的,不写进这一栏。做成了给空字符串。
 
 【输出】
-严格输出以下 JSON,不要任何多余内容。**先写 fact**——成败与留下的东西都要从我实际做出来的
-里头读,不是先拍板再补一句话去圆;后面三句叙述又要把那件东西说进去。
-**success 与 product_carried 写裸布尔 true / false,updated_index 写裸整数,都不要加引号。**
-{"fact": "第一人称、≤68字", "success": true或false, "updated_index": 整数（0=手上的东西一件也没动到）, "updated_name": "≤14字；不改名则空字符串", "updated_state": "≤12字；没变则空字符串", "updated_desc": "≤24字；没变则空字符串", "updated_content": "≤80字；没变或没有内容则空字符串", "product_name": "≤14字；没有则空字符串", "product_desc": "≤24字；没有则空字符串", "product_content": "≤80字；没有内容则空字符串", "product_carried": true或false, "outcome": "第三人称、点名我的名字、≤40字、**单行不换行**", "observation": "第三人称、点名我的名字、≤30字、**单行不换行**", "why": "第三人称、≤20字；做成了给空字符串"}
+严格输出以下 JSON,不要任何多余内容。**先写 fact**——留下的东西要从我实际做出来的里头读,
+不是先拍板再补一句话去圆;后面三句叙述又要把那件东西说进去。
+**product_carried 写裸布尔 true / false,updated_index 写裸整数,都不要加引号。**
+{"fact": "第一人称、≤68字", "updated_index": 整数（0=手上的东西一件也没动到）, "updated_name": "≤14字；不改名则空字符串", "updated_state": "≤12字；没变则空字符串", "updated_desc": "≤24字；没变则空字符串", "updated_content": "≤80字；没变或没有内容则空字符串", "product_name": "≤14字；没有则空字符串", "product_desc": "≤24字；没有则空字符串", "product_content": "≤80字；没有内容则空字符串", "product_carried": true或false, "outcome": "第三人称、点名我的名字、≤40字、**单行不换行**", "observation": "第三人称、点名我的名字、≤30字、**单行不换行**", "why": "第三人称、≤20字；做成了给空字符串"}
 """
         # §3: the thing to judge and the yardstick go last, right before the output instructions.
         scene_part = f"\n【我此刻所处的现场】\n{scene}\n" if scene else ""
@@ -512,7 +542,10 @@ class WorkExecutor(ActionExecutor):
 【这件事上花掉的时间】
 {duration_label}（时间地点见开头，不必复述）
 {expected_part}
-依上面说定的 JSON 格式给出判断，只输出 JSON、不写任何多余内容。"""
+【这一回的结果】
+{tier_phrase(tier, voice=SituationVoice.FIRST)}
+
+依上面说定的 JSON 格式记下这一回，只输出 JSON、不写任何多余内容。"""
         try:
             with annotate_call(
                 given_facts=GivenFacts()  # same source as user above
@@ -522,7 +555,9 @@ class WorkExecutor(ActionExecutor):
                 .add("现场", scene)
                 .add("我动手前打算做的", purpose)
                 .add("花掉的时间", duration_label)
-                .add("我出发时想要的", expected_outcome),
+                .add("我出发时想要的", expected_outcome)
+                .add("这一回的结果", tier_phrase(tier, voice=SituationVoice.FIRST)),
+                check_tier=tier.value,
                 # So review can tell what updated_index pointed at.
                 item_candidates={
                     str(i): (item.name or "某物") for i, item in enumerate(in_hand, 1)
@@ -536,17 +571,17 @@ class WorkExecutor(ActionExecutor):
                         LLMMessage(role="user", content=user),
                     ],
                     temperature=0.7,
-                    # fact (≤68 chars ≈ 102 tok) + success (~3) + updated_index (~3)
+                    # fact (≤68 chars ≈ 102 tok) + updated_index (~3)
                     # + updated_name (≤14 ≈ 21) + updated_state (≤12 ≈ 18) + updated_desc (≤24 ≈ 36)
                     # + updated_content (≤80 ≈ 120) + product_name (≤14 ≈ 21)
                     # + product_desc (≤24 ≈ 36) + product_content (≤80 ≈ 120)
                     # + product_carried (~3) + outcome (≤40 ≈ 60) + observation (≤30 ≈ 45)
-                    # + why (≤20 ≈ 30) + structure for 14 fields (~70); est. ~688 tok.
-                    max_tokens=output_budget(688),
+                    # + why (≤20 ≈ 30) + structure for 13 fields (~65); est. ~680 tok.
+                    max_tokens=output_budget(680),
                 json_mode=True,
                 )
             data = extract_json(response.content)
-            succeeded = coerce_bool(data.get("success"), True)
+            succeeded = tier.succeeded
             place = f"在{location}" if location else ""
             fact = str(data.get("fact", "")).strip() or (
                 f"{place}花了{duration_label}做「{purpose}」，做成了。"

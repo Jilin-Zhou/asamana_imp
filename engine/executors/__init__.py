@@ -5,6 +5,7 @@ from __future__ import annotations
 from core.interfaces.action import ActionType
 from core.interfaces.directory import WorldDirectory
 from core.interfaces.llm import LLMRouter
+from engine.check import CheckAssessor
 from engine.executors.base import ActionExecutionState, ActionExecutor
 from engine.executors.covert import CovertExecutor
 from engine.executors.errand import ErrandExecutor
@@ -22,17 +23,24 @@ def build_default_registry(
     *,
     seconds_per_step: int = 3600,
     world_start_second_of_day: int = 0,
+    check_seed: str = "",
 ) -> ActionExecutorRegistry:
-    """Create and configure the default executor registry for a world run."""
+    """Create and configure the default executor registry for a world run.
+
+    ``check_seed`` seeds every check's dice (``engine.check``); pass the world id, so a world's
+    rolls are reproducible and no two worlds share them.
+    """
     registry = ActionExecutorRegistry()
+    checks = CheckAssessor(llm_router, seconds_per_step=seconds_per_step, seed=check_seed)
     simple = SimpleExecutor(directory, seconds_per_step=seconds_per_step)
     social = SocialExecutor(
         llm_router, directory, seconds_per_step=seconds_per_step, world_start_second_of_day=world_start_second_of_day)
     movement = MovementExecutor(directory, seconds_per_step=seconds_per_step)
-    work = WorkExecutor(llm_router, directory, seconds_per_step=seconds_per_step)
-    physical = PhysicalExecutor(llm_router, directory, seconds_per_step=seconds_per_step)
+    work = WorkExecutor(llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
+    physical = PhysicalExecutor(
+        llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
     covert = CovertExecutor(
-        llm_router, directory, seconds_per_step=seconds_per_step,
+        llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step,
         world_start_second_of_day=world_start_second_of_day)
     errand = ErrandExecutor(directory)
 

@@ -622,6 +622,8 @@ class ExecutionProcessor:
             "adjudication_failed": result.adjudication_failed,  # null steps aren't carried
             "not_executed": result.not_executed,  # unmet-precondition non-event (muted when rendered)
             "dialogue": list(result.dialogue),
+            # The roll behind ``succeeded``; code layer, for the observer only.
+            "check": result.check.to_dict() if result.check is not None else None,
             # From landed effects (what happened), not exec_state's list (intent). Kept apart
             # from participant_ids: listeners didn't spend their turn.
             "overheard_by": [e.agent_id for e in result.target_effects if e.overheard],

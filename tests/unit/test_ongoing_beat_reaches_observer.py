@@ -18,6 +18,7 @@ from engine.executors.work import WorkExecutor
 from interaction.models import _action_from_record
 from tests.unit.test_action_executors import _directory, _make_agent, _make_environment
 from tests.unit.bus_tap import tap
+from tests.unit.check_fixtures import fixed_check
 
 
 async def _tick_a_multi_step_work(container) -> dict:
@@ -26,7 +27,7 @@ async def _tick_a_multi_step_work(container) -> dict:
     agent = _make_agent(container, world_id="w", agent_id="agent-a", name="李渊")
     agents = {"agent-a": agent}
     directory = _directory(agents)
-    executor = WorkExecutor(container.llm_router, directory)
+    executor = WorkExecutor(container.llm_router, directory, check_assessor=fixed_check())
     registry = ActionExecutorRegistry()
     registry.register(ActionType.WORK, executor)
     processor = ExecutionProcessor(
@@ -79,7 +80,7 @@ async def test_the_progress_beat_says_who_it_is_aimed_at(container) -> None:
     b = _make_agent(container, world_id="w", agent_id="agent-b", name="魏征")
     agents = {"agent-a": a, "agent-b": b}
     directory = _directory(agents)
-    executor = WorkExecutor(container.llm_router, directory)   # any multi-step executor
+    executor = WorkExecutor(container.llm_router, directory, check_assessor=fixed_check())   # any multi-step executor
     registry = ActionExecutorRegistry()
     registry.register(ActionType.WORK, executor)
     processor = ExecutionProcessor(

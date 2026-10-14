@@ -19,6 +19,7 @@ from engine.executors.base import ActionExecutionState
 from engine.executors.movement import MovementExecutor
 from engine.executors.simple import SimpleExecutor
 from tests.unit.test_action_executors import _directory, _make_environment
+from tests.unit.check_fixtures import fixed_check
 
 _THOUGHT = "我改主意了，此刻回头才是活路"
 
@@ -81,7 +82,7 @@ async def test_an_exposed_covert_leaks_the_deed_but_never_the_thought(container)
     env = _make_environment()
     agent = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
     agents = {"agent-a": agent}
-    executor = CovertExecutor(container.llm_router, _directory(agents))
+    executor = CovertExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
     action = AgentAction(
         agent_id="agent-a", step=1, action_type=ActionType.COVERT,
         action_description="潜入库房", target=ActionTarget(), estimated_steps=3,

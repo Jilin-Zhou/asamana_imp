@@ -20,6 +20,7 @@ from core.coerce import (
     coerce_optional_str,
 )
 from core.interfaces.agent_store import relation_has_substance
+from core.interfaces.check import CheckRecord
 from core.interfaces.snapshot import WorldSnapshot
 from engine.environment import IN_TRANSIT
 from world.identity_color import MINDLESS_BODY_COLOR
@@ -166,6 +167,28 @@ class ActionTargetView:
 
 
 @dataclass(frozen=True)
+class CheckView:
+    """The roll a result was narrated from (``core.interfaces.check.CheckRecord``): simulation
+    facts in the engine's own vocabulary, numbers spelled out. Only the observer sees these
+    numbers; no agent ever does."""
+
+    difficulty: str   # easy / normal / hard / very_hard
+    edge: str         # much_worse … much_better; "even" when pure_chance
+    pure_chance: bool
+    dice: list[int]
+    dc: int
+    modifier: int
+    total: int
+    tier: str         # core.interfaces.check.CheckTier value
+    reason: str       # the assessor's rationale, third person and god-view
+
+
+def _check_view(payload: object) -> "CheckView | None":
+    record = CheckRecord.from_dict(payload)
+    return CheckView(**record.to_dict()) if record is not None else None
+
+
+@dataclass(frozen=True)
 class DialogueTurn:
     """One line of a conversation: who said it, and what."""
 
@@ -250,6 +273,9 @@ class ActionSummary:
     inner_monologue: str = ""
     is_main_character: bool = False
     dialogue: list[DialogueTurn] = field(default_factory=list)
+    # The roll behind ``succeeded``; None when nothing was rolled (no doubt, or a type that never
+    # rolls).
+    check: CheckView | None = None
     # Monotonic emission ordinal stamped by the runtime: the event's position on the world's
     # emission timeline (an engine property, not a render concept), used to order events within
     # a step. Code-layer only, never rendered. 0 for step-0 initialization records.
@@ -667,6 +693,7 @@ def _action_from_record(record: Mapping[str, Any]) -> ActionSummary:
         inner_monologue=inner_monologue,
         is_main_character=bool(record.get("is_main_character", False)),
         dialogue=dialogue,
+        check=_check_view(record.get("check")),
         seq=int(coerce_optional_int(record.get("seq")) or 0),
     )
 

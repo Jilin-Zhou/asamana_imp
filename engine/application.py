@@ -702,6 +702,7 @@ class NarrativeApplication:
                 world.directory,
                 seconds_per_step=clock.config.seconds_per_step,
                 world_start_second_of_day=WorldTime.from_step(0, clock.config).elapsed_seconds,
+                check_seed=world.world_id,
             ),
             maintenance=CognitionMaintenance(
                 memory_decay_interval=self._config.engine.decay_interval,

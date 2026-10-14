@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any, Iterable, List
 
 from core.coerce import coerce_enum
+from core.interfaces.check import CheckRecord
 from core.interfaces.condition import BodyCondition
 from core.interfaces.urgency import Urgency
 
@@ -502,6 +503,9 @@ class ActionResult:
     - ``entity_spawns``: ``name``/``description`` are the item's narrative reference;
       ``perception`` is onlooker text. ``is_public`` decides who can reach it from now on,
       ``perception`` who sees it appear; a private item sets neither.
+    - ``check``: not text but the roll behind the result, code layer only (see
+      ``core.interfaces.check``). The god-view record and the renderer read it; nothing feeds it
+      back into a prompt or a memory.
 
     TALK is the model case: ``outcome`` = the named transcript; ``observations`` = "A and B
     talked and parted on bad terms"; ``factual_memory`` = each participant's own summary.
@@ -556,6 +560,9 @@ class ActionResult:
     # a null step with no writeback (Rule 1 tier 1). A genuine in-world failure leaves this False
     # and IS remembered. Never set on a fabricated/“successful” result.
     adjudication_failed: bool = False
+    # The roll this result was narrated from; None when nothing was rolled (no doubt, or a type
+    # that never rolls). See the class docstring.
+    check: "CheckRecord | None" = None
     # True when a precondition was unmet (target absent or busy, no path, prerequisite missing);
     # set by ActionExecutionState.create_failed, always with succeeded=False. Unlike
     # adjudication_failed it IS remembered: a foiled plan is a real experience. It only lets
