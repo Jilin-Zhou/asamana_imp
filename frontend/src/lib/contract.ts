@@ -18,6 +18,7 @@ export const ActionType = {
   rest:         "rest",
   send_message: "send_message",
   errand:       "errand",
+  trade:        "trade",
 } as const;
 export type ActionTypeValue = typeof ActionType[keyof typeof ActionType];
 
@@ -57,6 +58,7 @@ export const Deed = {
   rest:         "rest",
   covert:       "covert",
   errand:       "errand",
+  trade:        "trade",
 } as const;
 export type DeedValue = typeof Deed[keyof typeof Deed];
 
@@ -106,10 +108,11 @@ export const RefKind = {
   location: "location",
   item:     "item",
   landmark: "landmark",
+  money:    "money",
   object:   "object",
 } as const;
 
-const THING_KINDS: string[] = [RefKind.item, RefKind.landmark, RefKind.object];
+const THING_KINDS: string[] = [RefKind.item, RefKind.landmark, RefKind.money, RefKind.object];
 
 /**
  * Who an action is done to; empty when it acts on a place or a thing (an answer, not a gap).

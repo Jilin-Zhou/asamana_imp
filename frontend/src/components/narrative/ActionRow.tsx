@@ -126,15 +126,17 @@ export default function ActionRow({
   const tierShown = !!act.check && !isInterrupt;
   const rolledFailure = tierShown && FAILING_TIERS.has(act.check!.tier);
   // A talk's result is the conversation itself, rendered structurally below — so its
-  // outcome (gist + verbatim transcript) must never become prose.
-  const spokenFor = act.action_type === ActionType.talk && turns.length > 0;
+  // outcome (gist + verbatim transcript) must never become prose. A trade's haggling renders
+  // the same way, and how the deal ended is its gist (the outcome without the transcript).
+  const spokenFor =
+    (act.action_type === ActionType.talk || act.action_type === ActionType.trade) && turns.length > 0;
+  const resultLine = spokenFor ? (act.action_type === ActionType.trade ? act.gist : "") : act.outcome;
   const showOutcome =
-    !!act.outcome &&
+    !!resultLine &&
     act.phase !== Phase.initialization && // step-0 "初始化完成" is placement noise, not a result
     // An opening's or a tick's outcome only restates the body; the result comes on the close.
     !opening &&
-    !tick &&
-    !spokenFor;
+    !tick;
 
   return (
     <div
@@ -313,9 +315,9 @@ export default function ActionRow({
         <p className="mt-2 pt-2 border-t border-slate-800/50 text-[13px] leading-relaxed text-slate-400">
           <span className="text-emerald-500/70">↳ </span>
           {/* The whole record, including privileged detail (an interrupt's quoted reason).
-              A talk's transcript never lands here: showOutcome drops the outcome when the
-              structured `dialogue` renders it. */}
-          {act.outcome}
+              A transcript never lands here: resultLine drops the outcome when the structured
+              `dialogue` renders it. */}
+          {resultLine}
         </p>
       )}
 

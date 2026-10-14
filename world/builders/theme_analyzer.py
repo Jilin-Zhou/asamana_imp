@@ -12,10 +12,12 @@ from core.interfaces.llm import LLMMessage, LLMRouter, LLMScene, extract_json_ob
 from core.logging import get_logger
 from core.prompts import MEMORY_IMPORTANCE_SCORE_DEFINITION, RELATION_LABEL_FORMAT
 from core.coerce import (
-    coerce_float, coerce_int, coerce_mapping_list, coerce_optional_float, coerce_str,
+    coerce_enum, coerce_float, coerce_int, coerce_mapping_list, coerce_optional_float, coerce_str,
     coerce_str_list,
 )
+from core.interfaces.economy import MAX_PRICES, Economy
 from engine.clock import SECONDS_PER_HOUR, resolve_step_seconds
+from engine.weather import DEFAULT_CLIMATE, Climate
 
 from world.models import (
     AgentTier, HistoricalEventSeed, LocationSeed, NpcSeed, RelationSeed, ThemeAnalysis,
@@ -77,6 +79,21 @@ _THEME_PROMPT_SCHEMA = {
             "<整数 1-24：这个故事每推进一步跨过多少小时。判据见上方约束；由你据 core_tension 的"
             "时间尺度定，不要照抄默认值>"
         ),
+    },
+    "climate": (
+        "<这个世界所在之地的气候，从下列取值中选一个："
+        + "；".join(f"{c.value}={c.label}" for c in Climate)
+        + "。按地理与时代如实选，天气由它而来>"
+    ),
+    "economy": {
+        "currency": "<这个世界的钱怎么叫（≤4字），按时代与地域写这个世界自己的说法>",
+        "unit": "<钱的计数单位（≤2字）>",
+        "prices": [
+            {
+                "item": "<这个世界里一样常见的东西或一项开销（≤10字）>",
+                "price": "<整数：按上面的单位计的大致价钱>",
+            }
+        ],
     },
     "key_figures": [
         {
@@ -242,6 +259,10 @@ _THEME_TOKENS_PER_FIGURE = 200
 _THEME_TOKENS_PER_RELATION = 122
 _THEME_TOKENS_HISTORICAL = 124 * 6
 _THEME_TOKENS_SEEDS = 320 * 10
+#   climate + economy  ~202                  (climate enum 5 + currency ≤4 chars 6 + unit 3
+#                                             + prices ≤6 × (item ≤10 chars 15 + price 3 + structure 10)
+#                                             + 2 top-level keys and 3 inner fields 25)
+_THEME_TOKENS_ECONOMY_CLIMATE = 202
 #   npcs               98/body × cap (stated explicitly in the prompt, see _npc_count_constraint)
 #     name 5 chars ≈ 8 + gender ≈ 3 + age ≈ 3 + description ≤30 chars ≈ 45 + location_name ≈ 12
 #     + 5 fields of structure ≈ 25 → ~96, rounded to 98.
@@ -362,6 +383,7 @@ def _theme_max_tokens(max_agents: int | None, max_npcs: int = 0) -> int:
         + _THEME_TOKENS_PER_RELATION * (n * (n - 1) // 2)
         + _THEME_TOKENS_HISTORICAL
         + _THEME_TOKENS_SEEDS
+        + _THEME_TOKENS_ECONOMY_CLIMATE
         + _THEME_TOKENS_PER_NPC * max(max_npcs, 0)
     )
     return output_budget(answer)
@@ -581,6 +603,11 @@ class ThemeAnalyzer:
             "之衰）；(b) 不要习惯性取 1 或 24 两个极值，绝大多数故事落在中间；"
             "(c) 这个值一经写定即冻结、贯穿整个故事，不是开局的临时值。"
         )
+        constraint_lines.append(
+            f"- 钱与物价（economy）：写出这个世界的钱怎么叫、怎么计数，再列至多 {MAX_PRICES} 条参考物价，"
+            "从日常小物到贵重之物都有一些，彼此价钱要相称。物价只是行情，不是哪一笔买卖的成交价；"
+            "人物各有多少钱不在这里定。"
+        )
         # Criteria for the npcs tier. The count constraint is per call (stays in user); what this tier's
         # people look like is constant and goes in the system prefix. Mostly negative examples: positive
         # ones get copied, and the main risk for this tier is a batch of interchangeable people (creative output → negative constraints first).
@@ -728,7 +755,10 @@ class ThemeAnalyzer:
         entity_seeds = _distinct_entity_seeds([
             WorldEntitySeed(
                 name=coerce_str(item.get("name")),
-                entity_type=coerce_str(item.get("entity_type"), fallback="item"),
+                # Only item or landmark: money is never a seed (see WorldEntityType.MONEY).
+                entity_type=(
+                    "landmark" if coerce_str(item.get("entity_type")) == "landmark" else "item"
+                ),
                 description=coerce_str(item.get("description")),
                 initial_state=coerce_str(item.get("initial_state"), fallback="intact"),
                 location_name=coerce_str(item.get("location_name")),
@@ -817,6 +847,8 @@ class ThemeAnalyzer:
             world_entity_seeds=entity_seeds,
             npc_seeds=npc_seeds,
             source_material=source_material,
+            climate=coerce_enum(Climate, payload.get("climate"), default=DEFAULT_CLIMATE),
+            economy=Economy.from_dict(payload.get("economy")),
         )
 
 

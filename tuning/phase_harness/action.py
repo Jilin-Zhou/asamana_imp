@@ -13,7 +13,7 @@ from core.container import Container
 from core.context import clear_log_context, set_log_context
 from core.logging import get_logger
 from core.interfaces.action import (
-    ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref,
+    ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref, TradeTerms,
 )
 from core.prompts import render_condition
 from engine.executors import build_default_registry
@@ -30,7 +30,9 @@ from tuning.trace import InMemoryTraceSink, PhaseTrace
 logger = get_logger(__name__)
 
 
-_INTERACTIVE_TYPES = {ActionType.TALK, ActionType.SEND_MESSAGE, ActionType.COVERT}
+_INTERACTIVE_TYPES = {ActionType.TALK, ActionType.SEND_MESSAGE, ActionType.COVERT, ActionType.TRADE}
+# The types that take the other party's turn (arbitration absorbs it as INVITE).
+_CLAIMING_TYPES = {ActionType.TALK, ActionType.TRADE}
 
 
 def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, Any]:
@@ -125,9 +127,9 @@ def _build_agent_action(
     if atype in _INTERACTIVE_TYPES:
         if tgt:
             other = Ref.agent(resolve_ref(tgt, id_by_name, valid_ids))
-            # A conversation also takes the other party's turn (arbitration absorbs it as INVITE); messages and covert actions don't occupy anyone else's body.
+            # A conversation or a trade also takes the other party's turn (arbitration absorbs it as INVITE); messages and covert actions don't occupy anyone else's body.
             target = ActionTarget(
-                acts_on=[other], claims=[other] if atype is ActionType.TALK else [],
+                acts_on=[other], claims=[other] if atype in _CLAIMING_TYPES else [],
             )
     elif atype == ActionType.MOVE:
         if str(tgt or "") == "$ADJACENT":
@@ -152,6 +154,15 @@ def _build_agent_action(
                 ),
             )
     intent = None
+    if atype == ActionType.TRADE and target.acts_on:
+        intent = ActionIntent(
+            purpose=spec.get("description", ""),
+            trade=TradeTerms(
+                counterpart_id=target.acts_on[0].id,
+                give_entity_id=str(spec.get("give", "")), give_amount=int(spec.get("give_money", 0)),
+                ask_entity_id=str(spec.get("ask", "")), ask_amount=int(spec.get("ask_money", 0)),
+            ),
+        )
     if atype == ActionType.ERRAND:
         # The person given the errand only goes into acts_on: in claims, arbitration would reject the whole action as "no response".
         bearer = next(
@@ -185,7 +196,7 @@ def _build_agent_action(
 def _feasibility_view(action: AgentAction, env) -> dict[str, Any]:
     """Pre-action: run the type's feasibility check (where applicable)."""
     at = action.action_type
-    if at == ActionType.TALK:
+    if at in _CLAIMING_TYPES:
         r = env.check_talk_feasibility(action.agent_id, action.target.acted_on_agents)
     elif at == ActionType.MOVE:
         r = env.check_move_feasibility(action.agent_id, action.target.acted_on_place)

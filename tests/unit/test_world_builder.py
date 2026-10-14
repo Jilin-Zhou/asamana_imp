@@ -1224,3 +1224,29 @@ async def test_a_figure_given_twice_does_not_cover_one_left_out() -> None:
 def test_gender_is_normalized_to_the_two_canonical_values(raw, expected) -> None:
     """Consumers compare against 「男」/「女」 exactly; an unreadable label is unknown, not guessed."""
     assert _normalize_gender(raw) == expected
+
+
+def test_theme_analysis_reads_the_climate_and_economy_and_never_seeds_money() -> None:
+    import asyncio
+    import json as _json
+
+    from core.interfaces.llm import LLMRouter, LLMScene
+    from engine.weather import Climate
+    from providers.llm.mock import MockLLMProvider
+    from world.builders.theme_analyzer import ThemeAnalyzer
+
+    payload = _json.dumps({
+        "world_name": "W", "era_description": "e", "core_tension": "t", "narrative_theme": "n",
+        "narrative_pitch": "p", "world_time_config": {"start_year": 1},
+        "key_figures": [{"name": "A", "role": "r", "importance": "main", "brief": "b"}],
+        "climate": "arid",
+        "economy": {"currency": "铜钱", "unit": "文", "prices": [{"item": "一碗面", "price": 8}]},
+        "world_entity_seeds": [{"name": "钱箱", "entity_type": "money", "description": "d"}],
+    }, ensure_ascii=False)
+    router = LLMRouter({scene: MockLLMProvider(fixed_response=payload) for scene in LLMScene})
+    analysis = asyncio.run(ThemeAnalyzer(router).analyze("any theme"))
+    assert analysis.climate is Climate.ARID
+    assert analysis.economy.amount_text(8) == "8文铜钱"
+    assert [s.entity_type for s in analysis.world_entity_seeds] == ["item"]
+    restored = type(analysis).from_dict(analysis.as_dict())
+    assert (restored.climate, restored.economy) == (analysis.climate, analysis.economy)

@@ -22,6 +22,8 @@ MOCK_WORLD_BUILDING_RESPONSE = json.dumps({
     "narrative_theme": "权力的代价",
     "narrative_pitch": "继承之争已被双方默认逼到临界，谁先开口或动手尚未决定。",
     "world_time_config": {"era_name": "武德", "start_year": 9},
+    "climate": "temperate_monsoon",
+    "economy": {"currency": "铜钱", "unit": "文", "prices": [{"item": "一斗米", "price": 30}]},
     "key_figures": [
         {"name": "Li Shimin", "role": "Prince of Qin", "importance": "main", "brief": "Battle-tested prince under threat."},
         {"name": "Li Jiancheng", "role": "Crown Prince", "importance": "main", "brief": "Heir defending his position."},

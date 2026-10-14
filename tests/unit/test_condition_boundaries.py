@@ -74,6 +74,7 @@ _CONDITION_LABEL_SITES = (
     "engine/executors/social.py:",    # both sides of a dialogue + two first-person conversation memories
     "engine/executors/work.py:",      # solo work self-assessment + the interrupted memory
     "engine/check.py:",               # check assessment (a bound man is at a disadvantage)
+    "engine/executors/trade.py:",     # haggling (a bound man bargains from weakness)
     "engine/event.py:",               # event editor's character briefing (condition scalar alongside "体力")
     "agent/decision.py:",             # decision: first line of 【我所处的现实】
     "agent/agent.py:",                # interrupt weighing + feedback emotion

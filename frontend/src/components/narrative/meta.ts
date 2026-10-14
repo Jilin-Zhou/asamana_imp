@@ -27,6 +27,7 @@ const CHIP: Record<ActionTypeValue, string> = {
   [ActionType.rest]:         "text-teal-300 border-teal-900/60 bg-teal-950/40",
   [ActionType.send_message]: "text-emerald-300 border-emerald-900/60 bg-emerald-950/40",
   [ActionType.errand]:       "text-lime-300 border-lime-900/60 bg-lime-950/40",
+  [ActionType.trade]:        "text-yellow-300 border-yellow-900/60 bg-yellow-950/40",
 };
 // A rolled result's chip, from triumph to disaster. A costly success is amber: it landed, and the
 // outcome names the price.

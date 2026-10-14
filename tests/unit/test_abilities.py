@@ -15,6 +15,7 @@ from agent.personality import EmotionState, PersonalityLayer, SoulLayer
 from core.interfaces.ability import Abilities, Attribute, Skill
 from core.interfaces.action import ActionType
 from core.interfaces.check import AbilityBasis, CheckRecord, Difficulty, Edge
+from core.interfaces.economy import Economy, PriceReference
 from core.interfaces.llm import LLMResponse
 from engine.check import CheckAssessor
 from world.builders.ability_designer import AbilityDesigner
@@ -178,8 +179,8 @@ def _definition(agent_id: str, name: str) -> AgentDefinition:
     )
 
 
-def _analysis() -> SimpleNamespace:
-    return SimpleNamespace(world_name="镖局", era_description="乱世")
+def _analysis(economy: Economy | None = None) -> SimpleNamespace:
+    return SimpleNamespace(world_name="镖局", era_description="乱世", economy=economy or Economy())
 
 
 class _SeqRouter:
@@ -308,3 +309,23 @@ def test_whoever_holds_the_thing_resists_when_present() -> None:
 def test_nobody_resists_a_thing_on_the_ground_or_in_his_own_hands() -> None:
     assert _opponent(_subject(item=_key(None))) is None
     assert _opponent(_subject(item=_key("thief"))) is None
+
+
+async def test_the_designer_hands_out_cash_on_the_world_s_scale() -> None:
+    silver = Economy(currency="银子", unit="两", prices=(PriceReference("一匹马", 20),))
+    router = _SeqRouter(_cast_reply({"index": 1, "attributes": {}, "skills": [], "cash": 35}, {"index": 2, "cash": -5}))
+    rated = await AbilityDesigner(router).design(_analysis(silver), [_definition("a1", "甲"), _definition("a2", "乙")])
+    assert [d.initial_cash for d in rated] == [35, 0]
+    prompt = "\n".join(m.content for m in router.calls[0])
+    assert "银子，按两计；参考物价：一匹马约20两" in prompt
+
+
+async def test_a_world_without_money_hands_out_none() -> None:
+    rated = await AbilityDesigner(_SeqRouter(_cast_reply({"index": 1, "cash": 99}))).design(_analysis(), [_definition("a1", "甲")])
+    assert rated[0].initial_cash == 0
+
+
+def test_cash_survives_a_round_trip() -> None:
+    definition = _definition("a1", "甲")
+    definition.initial_cash = 42
+    assert AgentDefinition.from_dict(definition.as_dict()).initial_cash == 42

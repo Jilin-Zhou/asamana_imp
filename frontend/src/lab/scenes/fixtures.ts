@@ -383,6 +383,7 @@ export const crate = (where: string, over: Partial<EntityView> = {}): Record<str
     is_public: true,
     content: "",
     created_step: 0,
+    quantity: 0,
     ...over,
   },
 });
@@ -409,6 +410,7 @@ export const carried = (holder: string, items: [string, string][]): Record<strin
         is_public: true,
         content: "",
         created_step: 0,
+        quantity: 0,
       },
     ]),
   );
@@ -424,6 +426,7 @@ export const gate = (where: string, over: Partial<EntityView> = {}): Record<stri
     is_public: true,
     content: "",
     created_step: 0,
+    quantity: 0,
     ...over,
   },
 });

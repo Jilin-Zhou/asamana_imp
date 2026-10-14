@@ -21,4 +21,5 @@ export const ACTION_IDENTITY: Record<ActionTypeValue, ActionIdentity> = {
   [ActionType.rest]:         { icon: "💤", label: "歇息" },
   [ActionType.send_message]: { icon: "📨", label: "传信" },
   [ActionType.errand]:       { icon: "🏃", label: "派人" },
+  [ActionType.trade]:        { icon: "🤝", label: "交易" },
 };

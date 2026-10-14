@@ -649,20 +649,26 @@ def vitality_line(
 
 
 def render_situation_header(situation, *, voice: SituationVoice) -> str:
-    """Situation header: one line saying when and where it is, injected at the start of cognition and judge prompts.
+    """Situation header: one line saying when and where it is and what the sky is doing, injected
+    at the start of cognition and judge prompts.
 
     Goes first in the user content, not in system: it changes every step and would break the
-    cacheable prefix. Either part may be missing and is then left out, never invented.
+    cacheable prefix. Any part may be missing and is then left out, never invented.
     """
     time_label = situation.time_label
+    weather = getattr(situation, "weather", "")
     if situation.location_view is None:
         if not time_label:
             return ""
-        return f"此刻是{time_label}。" if voice == SituationVoice.FIRST else f"当前时间：{time_label}。"
+        if voice == SituationVoice.FIRST:
+            return f"此刻是{time_label}，{weather}。" if weather else f"此刻是{time_label}。"
+        return f"当前时间：{time_label}；天气：{weather}。" if weather else f"当前时间：{time_label}。"
     place = render_location(situation.location_view)
     if voice == SituationVoice.FIRST:
-        return f"我此刻在{place}，当前时间为{time_label}。" if time_label else f"我此刻在{place}。"
-    return f"当前时间：{time_label}；当前地点：{place}。" if time_label else f"当前地点：{place}。"
+        sky = f"，{weather}" if weather else ""
+        return f"我此刻在{place}，当前时间为{time_label}{sky}。" if time_label else f"我此刻在{place}{sky}。"
+    sky = f"；天气：{weather}" if weather else ""
+    return f"当前时间：{time_label}；当前地点：{place}{sky}。" if time_label else f"当前地点：{place}{sky}。"
 
 
 def situation_location(situation) -> str:

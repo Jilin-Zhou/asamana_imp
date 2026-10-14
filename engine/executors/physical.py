@@ -244,6 +244,8 @@ class _Verdict:
     actor_condition_desc: str = ""
     actor_condition_steps: int = 0
     frees_actor: bool = False          # lifted the actor's existing condition (broke free / let go)
+    # Money only: how much actually changed hands (clamped by code to what was at stake).
+    amount_moved: int | None = None
 
 
 class PhysicalExecutor(ActionExecutor):
@@ -349,6 +351,9 @@ class PhysicalExecutor(ActionExecutor):
         state.extra["resolved_id"] = feasibility.resolved_id or target_id
         if recipient_id:
             state.extra["recipient_id"] = recipient_id
+        amount = getattr(action.intent, "amount", None)
+        if amount:
+            state.extra["amount"] = amount
         return state
 
     async def _resolve_subject(
@@ -439,6 +444,7 @@ class PhysicalExecutor(ActionExecutor):
             return [EntityStateChange(
                 entity_id=item.entity_id,
                 owner_id=subject.actor_id,
+                quantity=verdict.amount_moved,
                 perception=scene_line(location, f"{actor_name}拿起了{item.name}。"),
             )]
         if verdict.deed == Deed.RELINQUISH:
@@ -447,6 +453,7 @@ class PhysicalExecutor(ActionExecutor):
                 entity_id=item.entity_id,
                 owner_id=recipient_id or None,
                 location_id=None if recipient_id else environment.get_body_location(subject.actor_id),
+                quantity=verdict.amount_moved,
                 perception=scene_line(location, (
                     f"{actor_name}把{item.name}交到了{self._directory.agent_name(recipient_id)}手上。"
                     if recipient_id else f"{actor_name}放下了{item.name}。"
@@ -594,6 +601,11 @@ class PhysicalExecutor(ActionExecutor):
             agents=agents, with_background=True, visibility=SceneVisibility.GOD,  # functional judge
         ).text
         recipient_line = self._recipient_line(subject.recipient_id, subject.recipient_agent)
+        # Money: how much is at stake, at most the pile. Named in the act for the assessor and judge.
+        stake = 0
+        if subject.item is not None and subject.item.is_money:
+            stake = min(int(state.extra.get("amount") or subject.item.quantity), subject.item.quantity)
+            recipient_line += f"\n- 涉及钱数：{environment.economy.amount_text(stake)}"
 
         check = (
             await self._checks.assess(
@@ -619,6 +631,7 @@ class PhysicalExecutor(ActionExecutor):
                 needs_relation=subject.needs_relation,
                 recipient_line=recipient_line,
                 step=step,
+                stake=stake,
             )
             if check is not None else None
         )
@@ -823,6 +836,7 @@ class PhysicalExecutor(ActionExecutor):
         needs_relation: bool,
         recipient_line: str,
         step: int,
+        stake: int = 0,
     ) -> "_Verdict | None":
         """Neutral third-party adjudication of the world facts of a settled ``tier``. Returns
         ``None`` when adjudication can't happen (LLM failure, missing actor), so the caller
@@ -919,6 +933,11 @@ class PhysicalExecutor(ActionExecutor):
                 '（如 open/used/torn/activated 等）；'
                 '不写它在谁手上、在哪儿（那不是状态），也不写另一样东西的状态；'
                 '这件东西若被彻底毁掉，那由 deed 答 destroy，这里不写",'
+            )
+        if stake:
+            entity_fields += (
+                ' "amount_moved": 这一动实际经手的钱数（整数，不超过【行动】里写的涉及钱数；'
+                '有代价的成功可以只到手一部分；没做成填 0）,'
             )
 
         # deed is the act, answered regardless of success; candidates narrow by target shape.
@@ -1029,7 +1048,7 @@ class PhysicalExecutor(ActionExecutor):
                     #   + target_condition (≤15 chars ≈23) + steps (~3) + frees_target (~3)
                     #   + keys (~25) ≈503 tok
                     # thing shape: + relation (~8, only when the act lands on someone's
-                    #   possession) + new_entity_state (~8) ≈446 tok
+                    #   possession) + new_entity_state (~8) + amount_moved on money (~8) ≈454 tok
                     # The person shape is the largest.
                     temperature=0.7,
                     max_tokens=output_budget(503),
@@ -1048,6 +1067,11 @@ class PhysicalExecutor(ActionExecutor):
         fact = str(data.get("fact", "")).strip() or description
         new_entity_state = str(data.get("new_entity_state", "")) if has_entity else ""
         succeeded = tier.succeeded
+        # A success moves at least something; a missing or garbled sum is the whole stake.
+        amount_moved = (
+            coerce_int(data.get("amount_moved"), default=stake, minimum=0, maximum=stake) or stake
+            if stake and succeeded else None
+        )
         return _Verdict(
             success=succeeded,
             # The judge sometimes fills why on success too. Unsliced: the prompt caps it.
@@ -1082,6 +1106,7 @@ class PhysicalExecutor(ActionExecutor):
                 data.get("actor_condition_steps", 0), default=0, minimum=0
             ),
             frees_actor=coerce_bool(data.get("frees_actor"), False),
+            amount_moved=amount_moved,
             deed=self._resolve_deed(
                 data.get("deed", ""),
                 is_person=is_person,

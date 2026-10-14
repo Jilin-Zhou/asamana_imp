@@ -174,7 +174,11 @@ async def test_restore_recovers_live_environment_entity_state(container, test_co
     assert edict.state == "unsealed"
     assert edict.owner_id == holder_id
     assert edict.location_id is None
-    assert [e.entity_id for e in restored.environment.get_items_of(holder_id)] == ["seed_edict"]
+    assert [
+        e.entity_id for e in restored.environment.get_items_of(holder_id) if not e.is_money
+    ] == ["seed_edict"]
+    # The cash he was built with comes back too: piles have no seed, only the snapshot.
+    assert restored.environment.money_of(holder_id) == environment.money_of(holder_id) > 0
 
 
 @pytest.mark.asyncio

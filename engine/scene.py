@@ -40,6 +40,7 @@ def situation_for(environment: "EnvironmentSystem", agent_id: str) -> Situation:
     return Situation(
         location_view=environment.space.view_of(loc_id),
         time_label=environment.current_world_time_label,
+        weather=environment.current_weather_label,
     )
 
 

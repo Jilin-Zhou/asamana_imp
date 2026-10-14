@@ -36,8 +36,9 @@ from core.context import (
 )
 from core.interfaces.action import (
     KIND_ITEM,
+    KIND_MONEY,
     KIND_OBJECT,
-    ActionTarget, ActionType, AgentAction, ErrandOrder, Ref,
+    ActionTarget, ActionType, AgentAction, ErrandOrder, Ref, TradeTerms,
 )
 from core.duration import describe_duration, describe_seconds
 from core.interfaces.llm import IndexedRef, LLMMessage, LLMRouter, LLMScene, extract_json_object, output_budget
@@ -85,6 +86,12 @@ class ActionIntent:
     # ``AgentAction.intent`` (an ``Any``, since core can't import this module).
     errand: "ErrandOrder | None" = None
 
+    # PHYSICAL on money: how much of the pile the act is about.
+    amount: int | None = None
+
+    # TRADE: what is offered and asked for.
+    trade: "TradeTerms | None" = None
+
 
 @dataclass
 class ActionCandidate:
@@ -113,6 +120,8 @@ _ACTION_SPACE: List[ActionCandidate] = [
     ActionCandidate(ActionType.COVERT,       "藏在暗处观察此处的某人某事，探听我本来无从得知的情形和情况——听清他们谈的是什么、看清他们做的是什么、看清此处发生了什么事、读到写着的是什么；须与目标同在一地"),
     ActionCandidate(ActionType.REST,         "暂时搁置外部事务进行休息（生理疲劳、情绪耗尽、心情低落、生命力亏损均可）；需要多个步骤，休息得越久，恢复的生命力越多"),
     ActionCandidate(ActionType.ERRAND,       "派一个听人吩咐做事的替我跑一趟别处：先定他去哪，再看要不要让他带上东西、指名一个人、**替我把一句话原样说出去**（指了人就说给那人听，没指人就在那处当众说）——填了哪几样就办哪几样。他没有心智：只会走到、交到、把那句话一字不改地说出口、把**眼睛看得见的**（谁在场、有什么东西、刚出了什么事）带回来；他不会打听、不会问话、不会看人脸色，更不会替我劝人、引开人、盯梢。我这一拍交代完就自由，不必等他回来"),
+    # Appended last: selected_index is a position in this list.
+    ActionCandidate(ActionType.TRADE,        "与此处标(在场)的某人当面谈一笔买卖或交换：拿我手上的东西或钱，换他手上的东西或钱；谈成了双方当场交割，谈不成什么都不动。填 trade_person_index 指认对方，再至少写清一边：我出什么（trade_give_*）、要他什么（trade_ask_*）"),
 ]
 
 # Fixed expectation for SEND_MESSAGE: an async action can only confirm "the message went out"
@@ -165,12 +174,22 @@ class LLMSelection:
     message_content: str = ""
     # ERRAND only: who runs it, where to, and what to do there. None for other actions.
     errand: "ErrandOrder | None" = None
+    # PHYSICAL on money only: how much of the pile.
+    amount: int | None = None
+    # TRADE only: what is offered and asked for.
+    trade: "TradeTerms | None" = None
 
 
 def _text(payload: dict, key: str) -> str:
     """Conservative read of a string slot: anything that isn't a string reads as empty."""
     raw = payload.get(key)
     return raw.strip() if isinstance(raw, str) else ""
+
+
+def _amount(payload: dict, key: str) -> int:
+    """A sum of money, bound to no list: a positive integer, else 0 (not filled)."""
+    raw = payload.get(key)
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 0
 
 
 @dataclass(frozen=True)
@@ -192,6 +211,8 @@ class _Slots:
     npc_ids: List[str]          # people here with no mind of their own: errand_npc_index / physical_npc_index
     # What I'm holding: a membership set, not an indexed list (see ``_own_item_ids``).
     own_item_ids: List[str]
+    # Who holds each listed thing (None: on the ground), for checks like "in his hands".
+    entity_holders: dict[str, str | None] = field(default_factory=dict)
     # Filled indices that fell outside their list. IndexedRef.resolve drops them silently, so
     # record them here or they are lost. Entries name only slot and number, so audits don't
     # depend on slot names or prompt layout.
@@ -254,6 +275,8 @@ class _Bound:
     target: ActionTarget
     description_suffix: str = ""
     errand: "ErrandOrder | None" = None
+    amount: int | None = None
+    trade: "TradeTerms | None" = None
 
 
 def _bind_send(slots: _Slots) -> "_Bound | None":
@@ -354,12 +377,17 @@ def _bind_physical(slots: _Slots) -> "_Bound | None":
         return _reject("physical_recipient_without_entity")
     if slots.grounded and acted_on is None:
         return _reject("physical_without_target")
+    # How much of a pile of money; meaningless on anything else, and unfilled means all of it.
+    amount = _amount(slots.payload, "physical_amount") if acted_on and acted_on.kind == KIND_MONEY else 0
     # The recipient goes into reaches, not acts_on: the act is on the thing (it changes hands)
     # and he is only affected. Not claims either — handing something over doesn't spend his turn.
-    return _Bound(ActionTarget(
-        acts_on=[acted_on] if acted_on else [],
-        reaches=[Ref.agent(recipient_id)] if recipient_id else [],
-    ))
+    return _Bound(
+        ActionTarget(
+            acts_on=[acted_on] if acted_on else [],
+            reaches=[Ref.agent(recipient_id)] if recipient_id else [],
+        ),
+        amount=amount or None,
+    )
 
 
 def _bind_move(slots: _Slots) -> "_Bound | None":
@@ -422,10 +450,11 @@ def _bind_errand(slots: _Slots) -> "_Bound | None":
     suffix = ""
     if message and not slots.flag("errand_announce") and not recipient_id:
         suffix, message = f"（我吩咐他：{message}）", ""
+    amount = _amount(slots.payload, "errand_amount") if item_id and slots.entity_types.get(item_id) == KIND_MONEY else 0
     order = (
         ErrandOrder(
             npc_id=npc_id, destination_id=destination,
-            item_id=item_id or "", recipient_id=recipient_id or "", message=message,
+            item_id=item_id or "", recipient_id=recipient_id or "", message=message, amount=amount,
         )
         if npc_id and destination else None
     )
@@ -433,6 +462,57 @@ def _bind_errand(slots: _Slots) -> "_Bound | None":
         ActionTarget(acts_on=[Ref.npc(npc_id)] if npc_id else []),
         suffix,
         errand=order,
+    )
+
+
+def _thing_in_hands(slots: _Slots, key: str, holder: str | None) -> tuple[str | None, bool]:
+    """A thing from the printed list that must be in ``holder``'s hands: ``(id, ok)``. Unfilled,
+    or a pile of money (money has its own slots), is ``(None, True)``."""
+    if not slots.filled(key):
+        return None, True
+    entity_id = slots.one(key, slots.entity_ids)
+    if entity_id is not None and slots.entity_types.get(entity_id) == KIND_MONEY:
+        return None, True
+    if entity_id is None or slots.entity_holders.get(entity_id) != holder:
+        return None, False
+    return entity_id, True
+
+
+def _bind_trade(slots: _Slots) -> "_Bound | None":
+    """Face to face with one present person, whose turn the haggling spends (claims, as TALK).
+
+    Things bind against the printed list and must sit in the right hands: what I give in mine,
+    what I ask for in his. Money has its own two slots, bound to no list, so a purse is never
+    picked as a thing: a listed pile chosen as the thing to give or ask for reads as unfilled.
+    No counterpart, or nothing on either side, rejects the step: a trade of nothing for nothing
+    is no act at all.
+    """
+    counterpart = slots.one("trade_person_index", slots.roster_ids)
+    if slots.grounded:
+        if counterpart is None:
+            return _reject("trade_without_counterpart")
+        if counterpart not in slots.visible_ids:
+            return _reject("trade_counterpart_not_present")
+
+    give, give_ok = _thing_in_hands(slots, "trade_give_item_index", slots.packet.agent_id if slots.packet else None)
+    if not give_ok:
+        return _reject("trade_give_not_in_hand")
+    ask, ask_ok = _thing_in_hands(slots, "trade_ask_item_index", counterpart)
+    if not ask_ok:
+        return _reject("trade_ask_not_theirs")
+    give_money = _amount(slots.payload, "trade_give_money")
+    ask_money = _amount(slots.payload, "trade_ask_money")
+    if slots.grounded and not (give or ask or give_money or ask_money):
+        return _reject("trade_without_terms")
+    terms = TradeTerms(
+        counterpart_id=counterpart or "",
+        give_entity_id=give or "", give_amount=give_money,
+        ask_entity_id=ask or "", ask_amount=ask_money,
+    ) if counterpart else None
+    return _Bound(
+        ActionTarget(acts_on=[Ref.agent(counterpart)], claims=[Ref.agent(counterpart)])
+        if counterpart else ActionTarget(),
+        trade=terms,
     )
 
 
@@ -454,6 +534,7 @@ _TARGET_BINDERS: dict[ActionType, Callable[[_Slots], "_Bound | None"]] = {
     ActionType.PHYSICAL: _bind_physical,
     ActionType.MOVE: _bind_move,
     ActionType.ERRAND: _bind_errand,
+    ActionType.TRADE: _bind_trade,
 }
 
 
@@ -553,6 +634,8 @@ class DecisionEngine:
             estimated_steps=selection.estimated_steps,
             destination=selection.target.acted_on_place if selection.action_type == ActionType.MOVE else None,
             errand=selection.errand,
+            amount=selection.amount,
+            trade=selection.trade,
         )
         return AgentAction(
             agent_id=personality.soul.agent_id,
@@ -693,9 +776,10 @@ class DecisionEngine:
                     # may each carry a bracketed date (ABSOLUTE_TIME_RULE, ≈8 chars×3 ≈36 tok) → ~416.
                     # Per-type extras are mutually exclusive: PHYSICAL recipient index ≈11 or
                     # item_id≤10 chars ≈20 → ≤~436; MOVE move_carry_indices ≈12 → ~439; SEND
-                    # message_announce ≈8 → ~447. ERRAND is costliest: ~416 + errand_message≤60
-                    # chars ≈90 + four index fields ≈44 + errand_announce ≈8 → ~558.
-                    max_tokens=output_budget(558),
+                    # message_announce ≈8 → ~447; PHYSICAL on money adds physical_amount ≈8; TRADE
+                    # five number fields ≈55 → ~471. ERRAND is costliest: ~416 + errand_message≤60
+                    # chars ≈90 + four index fields ≈44 + errand_announce ≈8 + errand_amount ≈8 → ~566.
+                    max_tokens=output_budget(566),
                     json_mode=True,
                 )
         except Exception as exc:
@@ -1048,6 +1132,7 @@ class DecisionEngine:
 - 当面说话/动手（TALK/COVERT/PHYSICAL-对人）只能挑“我能触及的人”里标(在场)的；只有传讯（SEND_MESSAGE）可以发给标(不在场)的人。
 - 动手（PHYSICAL）必须指认出下手的对象，且**只指认一个**：对“我能触及的人”里的人就填 physical_person_index，对“此处听人吩咐做事的”里的人就填 physical_npc_index（两份名单各数各的序号，拿错名单就打到别人身上了），对物就填 physical_entity_index，名单外的抽象之物才自填 item_id——四者填其一，一个都不填等于没动手，这一拍就白费了。
 - 唯一的例外是「把手里的东西交出去」：这一动受动的仍是那样东西（照填 physical_entity_index），只是另可填 physical_recipient_index 指认我要交给谁——他必须是“我能触及的人”里标(在场)的。我只是把东西放下、不交给谁，就不填它。
+- 买卖/交换（TRADE）只能和标(在场)的人谈：我出的东西必须在我手上，我要的东西必须在他手上；钱另有两栏，写数目即可。两边至少写一样，两边都空就不是买卖。
 - 派人跑腿（ERRAND）时我交代他的话——去看什么、看完回来报我、别惊动人——写进 action_description，绝不写进 errand_message：那一栏他会一字不改说出口，我的交代一旦写进去，就等于我自己把此行的目的喊了出来。
 - 如果要进行的行动涉及到人，行动一定要与【相关人物关系】中描述的关系符合常识，除非有特殊情况。
 - 不要脱离我此刻的需求与目标空转，也别被与我无关的事带跑。
@@ -1084,12 +1169,19 @@ class DecisionEngine:
   "physical_entity_index": <若我选 PHYSICAL 且要**对物**动手：填"我够得着的东西"里那样东西的序号(1起)；对人动手则省略>,
   "physical_recipient_index": <仅当我这一动是把手中之物交到某人手上：填"我能触及的人"里某个标(在场)者的序号(1起)；只是把东西放下、或这一动与交付无关，一律省略>,
   "item_id": "<仅当 PHYSICAL 的目标不在上面两份名单里(抽象之物，如'门'、'地面')才自填名称，≤10字；能用序号就别用它；非 PHYSICAL 省略>",
+  "physical_amount": <仅当 PHYSICAL 落在一堆钱上(physical_entity_index 指的是钱)：这一动涉及多少钱，按它的计数单位的整数——交出多少、拿走多少；整笔都算就省略>,
   "errand_npc_index": <若我选 ERRAND：填"此处听人吩咐做事的"里那个人的序号(1起)；否则省略。**必填**——这一动就是吩咐他去办，没有他就不成立>,
   "errand_destination_index": <若我选 ERRAND：填"我可前往"里他要去的那个地方的序号(1起)；否则省略。**必填**——一趟不去别处的差事不成立，那种事我自己伸手就够得到>,
   "errand_item_index": <仅当我要让他带上某样东西：填"我够得着的东西"里那一件的序号(1起)，**只能选标了「由我持有」的**——不能带别人手上、也带不了在地上的东西，得先拿到手才托得出去。不带东西就省略>,
+  "errand_amount": <仅当 errand_item_index 指的是我的钱：让他带多少，按它的计数单位的整数；整袋带去就省略>,
   "errand_recipient_index": <仅当这一趟是**只限于对某个人的**：填"我能触及的人"里的序号(1起)。**这一栏决定东西和话落到哪儿**——填了就是交到他手上、只说给他听；不填就是把东西搁在那处、把话在那处当众说出。只是去看看情形则省略>,
   "errand_announce": <仅当我要他到了那处把 errand_message *当众*广播宣告给在场的所有听时：填 true。我看不见那处有谁，所以公开是我主动选的，不是默认；只说给某个人听、或那只是我对他的交代，就省略此字段>,
   "errand_message": "<他到了那头**说出口**的原话。**先定听众**：填了 errand_recipient_index 就只说给那一个人听；填了 errand_announce=true 就是当众宣告。两个都没有，那这句话就不会被他说出口——它会被当成我打发他时的交代收起来。写成能照着说出口的话：第一人称，对听的人说，20-60字。这趟差事是干什么的已经写在 action_description 里，不必在这儿重复。不带话就省略>",
+  "trade_person_index": <若我选 TRADE：填"我能触及的人"里标(在场)的那个人的序号(1起)；否则省略>,
+  "trade_give_item_index": <TRADE 时我拿出手的东西：填"我够得着的东西"里**由我持有**的那件的序号(1起)；钱不在这里填，不出东西就省略>,
+  "trade_give_money": <TRADE 时我出多少钱（整数，按钱的计数单位，不超过我手上有的）；不出钱就省略>,
+  "trade_ask_item_index": <TRADE 时我想换到的东西：填"我够得着的东西"里**由他持有**的那件的序号(1起)；钱不在这里填，不要东西就省略>,
+  "trade_ask_money": <TRADE 时我要他付多少钱（整数，按钱的计数单位）；不要钱就省略>,
   "action_description": "<**act=true 时必填，任何行动都不可省**。第一人称，写我打算做什么，内容要具体完整：若上面指认了对象，就落到那个人 / 地点 / 物上；若这一动只关乎我自己(无对象可指认)，就直接写我此刻要做的事。描述具体清晰，简洁明了，15-40字>",
   "message_content": "<仅当 SEND_MESSAGE：我此刻要对**上面 person_indices 指认的那些收件人**(或在场众人)当面说出的**原话**，第一人称直接对其说，像真的在传话/宣告——不是对我自己动作的描述，也不要以第三人称提到对方；20-60字。其他行动一律省略此字段>",
   "expected_outcome": "<我期望这一步带来什么，10-30字>",
@@ -1164,6 +1256,9 @@ class DecisionEngine:
             npc_ids=list(packet.spatial.visible_npc_ids) if packet else [],
             # Sending something requires holding it (see ``_own_item_ids``).
             own_item_ids=_own_item_ids(packet) if packet else [],
+            entity_holders=(
+                {e.entity_id: e.holder_id for e in packet.spatial.visible_entities} if packet else {}
+            ),
         )
         bound = _TARGET_BINDERS.get(chosen.action_type, _bind_nothing)(slots)
         if slots.dropped:
@@ -1177,6 +1272,8 @@ class DecisionEngine:
             action_type=chosen.action_type,
             target=bound.target,
             errand=bound.errand,
+            amount=bound.amount,
+            trade=bound.trade,
             action_description=description.strip() + bound.description_suffix,
             inner_monologue=inner_monologue,
             estimated_steps=estimated_steps,
@@ -1197,6 +1294,8 @@ class DecisionEngine:
             return "通过直接的物理行为改变环境状态或影响他人。"
         if action_type == ActionType.COVERT:
             return "在不被察觉的情况下，探到我本来无从得知的事情。"
+        if action_type == ActionType.TRADE:
+            return "谈成这笔交换，各得其所。"
         dominant_label = _dominant_need_label(needs) if needs.dominant_need is not None else "稳定"
         return f"推进「{dominant_label}」需求。"
 

@@ -51,6 +51,7 @@ _BUSY_WITH: dict[ActionType, str] = {
     ActionType.PHYSICAL: "正在动手做别的事",
     ActionType.SEND_MESSAGE: "正忙着传讯",
     ActionType.ERRAND: "正在吩咐人办事",
+    ActionType.TRADE: "正与人谈买卖",
 }
 _BUSY_UNSEEN = "正忙于他事"
 

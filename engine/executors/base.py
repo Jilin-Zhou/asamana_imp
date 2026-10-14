@@ -128,6 +128,7 @@ def action_semantics(action: "AgentAction", result: "ActionResult") -> dict[str,
         "affected_entity_ids": [
             *(c.entity_id for c in (result.entity_state_changes or [])),
             *(s.entity_id for s in (result.entity_spawns or []) if s.entity_id),
+            *(t.entity_id for t in (result.transfers or []) if t.entity_id),
         ],
     }
 

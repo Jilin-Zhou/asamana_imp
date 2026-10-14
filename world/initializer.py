@@ -31,6 +31,7 @@ from engine.clock import (
 from core.interfaces.directory import WorldDirectory
 from engine.directory import LiveWorldDirectory
 from engine.environment import DEFAULT_MAX_NPCS, IN_TRANSIT, EnvironmentSystem
+from engine.weather import WeatherSystem
 from core.interfaces.world_config import WorldConfig
 from worlds.tiled import CAST_ART_FIELDS, CHARACTERS_FILENAME
 
@@ -72,7 +73,11 @@ class WorldInitializer:
         # entity state by reference, and that must never reach the shared template.
         world_config = copy.deepcopy(world_config)
         clock_config = self._clock_config_for(analysis, world_config)
-        environment = EnvironmentSystem(world_config, max_npcs=self._max_npcs)
+        weather = WeatherSystem.opening(
+            climate=analysis.climate, seed=world_id,
+            month=WorldTime.from_step(0, clock_config).month_of_year,
+        )
+        environment = EnvironmentSystem(world_config, max_npcs=self._max_npcs, economy=analysis.economy)
         await self._instantiate_entity_seeds(analysis, environment, world_config)
         self._instantiate_npc_seeds(analysis, environment, world_config)
         agents: dict[str, Agent] = {}
@@ -89,6 +94,8 @@ class WorldInitializer:
             environment.place_agent(agent_id=agent.agent_id,
                 location_id=definition.initial_location,
             )
+            if analysis.economy.has_money:
+                environment.add_money(definition.initial_cash, holder_id=agent.agent_id)
         # Concurrent but fail-fast: collection creation is build-time infrastructure, and any failure
         # makes the world unusable, so raise and let the user retry instead of degrading silently (Rule
         # 2/3). return_exceptions=True only keeps siblings from being cancelled (Rule 4); after
@@ -146,6 +153,7 @@ class WorldInitializer:
             environment=environment,
             directory=directory,
             clock_config=clock_config,
+            weather=weather,
         )
 
         logger.info(
@@ -168,6 +176,7 @@ class WorldInitializer:
             environment=environment,
             step_zero_snapshot=step_zero_snapshot,
             directory=directory,
+            weather=weather,
         )
 
     def _instantiate_agent(
@@ -475,7 +484,9 @@ class WorldInitializer:
             AgentDefinition.from_dict(d) for d in manifest["agent_definitions"]
         ]
 
-        environment = EnvironmentSystem(active_world_config, max_npcs=self._max_npcs)
+        environment = EnvironmentSystem(
+            active_world_config, max_npcs=self._max_npcs, economy=analysis.economy,
+        )
         await self._instantiate_entity_seeds(analysis, environment, active_world_config)
         # Npcs aren't rebuilt here, deliberately unlike entity seeds: the npc_states payload is
         # self-contained (identity + position + condition + current errand) and _restore_environment_state
@@ -517,6 +528,11 @@ class WorldInitializer:
                 await agent.memory_system.warm_recent_memories(current_step=0)
 
         await self._restore_environment_state(world_id, environment, resume_step)
+        resume_snapshot = await self._container.snapshot.load(world_id, resume_step)
+        weather = WeatherSystem.restore(
+            resume_snapshot.metadata.get("weather") if resume_snapshot is not None else None,
+            seed=world_id, climate=analysis.climate,
+        )
         self._repatriate_transit_agents(agents, agent_definitions, environment)
         directory = LiveWorldDirectory.from_agents(agents, environment)
 
@@ -540,6 +556,7 @@ class WorldInitializer:
             step_zero_snapshot=step_zero,
             directory=directory,
             current_step=resume_step,
+            weather=weather,
         )
 
     def _repatriate_transit_agents(
@@ -696,6 +713,7 @@ class WorldInitializer:
         environment: EnvironmentSystem,
         directory: WorldDirectory,
         clock_config: WorldTimeConfig,
+        weather: WeatherSystem,
     ) -> WorldSnapshot:
         world_time = WorldTime.from_step(0, clock_config)
         # Mirror the runtime's observation enrichment: snapshot_agent_state is id-only
@@ -727,6 +745,7 @@ class WorldInitializer:
                 },
                 "world_time": world_time.iso_label(),
                 "time_label": world_time.time_label,
+                "weather": weather.snapshot(),
                 "world": {
                     "world_name": analysis.world_name,
                     # Step duration: the review card shows it to the user before confirmation locks it in (once

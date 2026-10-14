@@ -467,6 +467,8 @@ class EntityView:
     is_public: bool = True
     content: str = ""
     created_step: int = 0
+    # Money only (entity_type "money"): how much is in the pile.
+    quantity: int = 0
 
 
 @dataclass(frozen=True)
@@ -516,6 +518,20 @@ class WorldTimeView:
 
 
 @dataclass(frozen=True)
+class WeatherView:
+    """The one sky over the world (``engine.weather.Weather``), in the engine's own vocabulary."""
+
+    sky: str        # clear / overcast / rain / snow / wind
+    severity: str   # low / medium / high; always low for clear and overcast
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "WeatherView | None":
+        data = coerce_dict(payload)
+        sky = str(data.get("sky") or "")
+        return cls(sky=sky, severity=str(data.get("severity") or "low")) if sky else None
+
+
+@dataclass(frozen=True)
 class StepEvent:
     """Observation-ready view of one completed runtime step."""
 
@@ -532,6 +548,8 @@ class StepEvent:
     # Directed relations as they stand at the end of this step — the same edges GET /graph
     # serves, so a live observer needs no per-step round trip for them.
     relations: list[GraphEdge] = field(default_factory=list)
+    # The sky this step ran under; None for a world without weather.
+    weather: "WeatherView | None" = None
 
     @classmethod
     def from_runtime_payload(
@@ -548,6 +566,7 @@ class StepEvent:
             # forward them through the transient WorldSnapshot so from_snapshot
             # surfaces them exactly as the persisted-snapshot path does.
             "broadcasts": coerce_list(payload.get("broadcasts")),
+            "weather": payload.get("weather"),
         }
         snapshot = WorldSnapshot(
             world_id=str(payload["world_id"]),
@@ -596,6 +615,7 @@ class StepEvent:
                 _broadcast_from_record(coerce_dict(b))
                 for b in coerce_list(snapshot.metadata.get("broadcasts"))
             ],
+            weather=WeatherView.from_payload(snapshot.metadata.get("weather")),
         )
 
 
@@ -850,6 +870,7 @@ def _entities_from_snapshot(snapshot: WorldSnapshot) -> dict[str, EntityView]:
             presence_ref=coerce_optional_str(payload.get("presence_ref")),
             description=str(payload.get("description") or ""),
             is_public=bool(payload.get("is_public", True)),
+            quantity=coerce_int(payload.get("quantity"), default=0),
             content=str(payload.get("content") or ""),
             created_step=coerce_int(payload.get("created_step"), default=0),
         )

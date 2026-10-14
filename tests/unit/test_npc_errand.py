@@ -1347,3 +1347,42 @@ def test_the_report_carries_no_judge_premise() -> None:
         visibility=SceneVisibility.OWN_EYES,
     ).text
     assert _ORDINARY_FIXTURES_LINE in judged
+
+
+@pytest.mark.asyncio
+async def test_a_runner_carries_the_sum_he_was_given_and_hands_over_exactly_that() -> None:
+    """Part of a purse travels as its own pile with its own id: the runner hands over what he
+    carries, not the pile the order first named (that stayed behind with the rest)."""
+    from core.interfaces.economy import Economy
+
+    env = _world()
+    env.economy = Economy(currency="银子", unit="两")
+    npc_id = _bearer(env)
+    env.place_agent(agent_id="a1", location_id="hall")
+    env.place_agent(agent_id="a2", location_id="gate")
+    env.add_money(30, holder_id="a1")
+    purse = env.purse_of("a1").entity_id
+    result = (await _run_errand(env, ErrandOrder(npc_id, "gate", item_id=purse, recipient_id="a2", amount=12), actor_id="a1"))[0]
+    for change in result.entity_state_changes:
+        env.change_entity_state(change, acting_agent_id="a1")
+    assert (env.money_of("a1"), env.money_of(npc_id)) == (18, 12)
+    assert "12两银子" in result.outcome
+
+    runner, messages = _runner(env)
+    await _run_full_errand(runner)
+    assert (env.money_of(npc_id), env.money_of("a2")) == (0, 12)
+    report = [m for m in await messages.collect(step=4) if m.recipients == ["a1"]][0].content
+    assert "12两银子已交到" in report, report
+
+
+@pytest.mark.asyncio
+async def test_a_whole_purse_sent_without_a_sum_goes_whole() -> None:
+    env = _world()
+    npc_id = _bearer(env)
+    env.place_agent(agent_id="a1", location_id="hall")
+    env.add_money(30, holder_id="a1")
+    purse = env.purse_of("a1").entity_id
+    result = (await _run_errand(env, ErrandOrder(npc_id, "gate", item_id=purse), actor_id="a1"))[0]
+    for change in result.entity_state_changes:
+        env.change_entity_state(change, acting_agent_id="a1")
+    assert (env.money_of("a1"), env.money_of(npc_id)) == (0, 30)

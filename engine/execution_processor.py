@@ -286,6 +286,11 @@ class ExecutionProcessor:
             keys.add(effect.agent_id)
         for change in result.entity_state_changes:
             keys.add("item:" + change.entity_id)
+        for transfer in result.transfers:
+            keys.update(
+                {"item:" + transfer.entity_id} if transfer.entity_id
+                else {"purse:" + transfer.from_id, "purse:" + transfer.to_id}
+            )
         # A body's condition can change only once per beat. Errands aren't keyed: they land in
         # the world in ``ErrandExecutor.start``, and landing never touches them.
         for npc_effect in result.npc_effects:
@@ -420,6 +425,13 @@ class ExecutionProcessor:
                     "entity_state_change_failed",
                     extra={"agent_id": result.action.agent_id, "step": step, "error": str(exc)},
                 )
+        if result.transfers and not self._environment.transfer_all(result.transfers):
+            # Something changed hands earlier this beat; the whole exchange is void, though the
+            # haggling it narrates did happen.
+            logger.warning(
+                "trade_transfer_void",
+                extra={"agent_id": result.action.agent_id, "step": step},
+            )
         for spawn in result.entity_spawns:
             try:
                 # A refusal is legitimate, but memory already says "I made it", so log at error

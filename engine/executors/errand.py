@@ -16,6 +16,7 @@ arbitration, and an N-step countdown can't model a state machine that can stall 
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, List
 
 from core.interfaces.action import (
@@ -56,7 +57,10 @@ def _render_errand(
         lines.append(f"去看看{to_name}在不在{destination}")
     if order.item_id:
         item = environment.get_entity(order.item_id)
-        item_name = (item.name if item is not None else "") or "某物"
+        item_name = (
+            environment.economy.amount_text(order.amount) if order.amount
+            else (item.name if item is not None else "") or "某物"
+        )
         lines.append(
             f"去到{destination}把{item_name}交到{to_name}手上" if to_name
             else f"去把{item_name}放在{destination}"
@@ -106,6 +110,10 @@ class ErrandExecutor(ActionExecutor):
             item = environment.get_entity(order.item_id)
             if item is None or item.owner_id != action.agent_id:
                 reason = f"{(item.name if item is not None else '') or '那样东西'}已不在他手上"
+            elif item.is_money:
+                # Fixed now: an amount on the order is what marks a money errand from here on.
+                amount = item.quantity if not order.amount else min(order.amount, item.quantity)
+                order = dataclasses.replace(order, amount=amount)
         if reason:
             return self._unavailable(action, step, reason, environment=environment)
 
@@ -179,9 +187,9 @@ class ErrandExecutor(ActionExecutor):
         # The item must reach the bearer now, or every carrying errand arrives empty-handed.
         # The gate in ``start`` guarantees he still holds it. No ``perception``: the handover is
         # folded into the single observation below.
-        handover = [EntityStateChange(entity_id=order.item_id, owner_id=order.npc_id)] if (
-            order.item_id
-        ) else []
+        handover = [EntityStateChange(
+            entity_id=order.item_id, owner_id=order.npc_id, quantity=order.amount or None,
+        )] if order.item_id else []
 
         # Three channels written separately: the observation must not contain what was ordered.
         outcome = scene_line(location, f"{actor_name}派{bearer}{errand_clause}。")

@@ -310,8 +310,16 @@ class NpcRunner:
 
         # ── Item: in someone's hands or on the ground.
         if order.item_id:
-            item = self._environment.get_entity(order.item_id)
-            item_name = (item.name if item is not None else "") or "某物"
+            # Money travels as whatever pile he carries: the order's id may have stayed behind
+            # with the rest of the purse.
+            item = (
+                self._environment.purse_of(npc.npc_id) if order.amount
+                else self._environment.get_entity(order.item_id)
+            )
+            item_name = (
+                self._environment.economy.amount_text(order.amount) if order.amount
+                else (item.name if item is not None else "") or "某物"
+            )
             if item is None or item.owner_id != npc.npc_id:
                 reports.append(f"{item_name}没能带到。")
                 outcome_parts.append(f"没能把{item_name}带来")
@@ -328,9 +336,10 @@ class NpcRunner:
                 handed = f"{bearer}把{item_name}交到了{to_name}手上。"
                 dropped = f"{bearer}把{item_name}放在了此处。"
                 self._environment.change_entity_state(EntityStateChange(
-                    entity_id=order.item_id,
+                    entity_id=item.entity_id,
                     owner_id=order.recipient_id if addressed else None,
                     location_id=None if addressed else here,
+                    quantity=order.amount or None,
                     perception=scene_line(place, handed if addressed else dropped),
                 ), acting_agent_id=npc.npc_id)
                 reports.append(

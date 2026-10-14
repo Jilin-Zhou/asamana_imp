@@ -214,6 +214,8 @@ export interface EntityView {
   // The step it came into the world on, so new things are read off the step's own table
   // rather than by diffing (impossible for the feed's earliest step).
   created_step: number;
+  // Money only (entity_type "money"): how much is in the pile; 0 for anything else.
+  quantity: number;
 }
 
 // Movement transit: present while an agent is mid-move. The renderer walks it

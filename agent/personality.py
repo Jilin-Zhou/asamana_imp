@@ -93,7 +93,8 @@ class AgentActivityStatus(str, Enum):
 def activity_status_for(action_type: ActionType) -> AgentActivityStatus:
     """What an agent is visibly doing while an action of this type runs."""
 
-    if action_type == ActionType.TALK:
+    # A trade is haggled face to face: to anyone watching, the two are talking.
+    if action_type in (ActionType.TALK, ActionType.TRADE):
         return AgentActivityStatus.TALKING
     if action_type == ActionType.REST:
         return AgentActivityStatus.RESTING
