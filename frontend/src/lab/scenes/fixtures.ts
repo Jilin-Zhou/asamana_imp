@@ -39,6 +39,7 @@ import type {
   NpcStateSummary,
   BroadcastSummary,
   EntityView,
+  WeatherView,
   GraphEdge,
   MessageSummary,
   StepEvent,
@@ -314,6 +315,8 @@ interface StepParts {
   /** Who is close to whom. Absent = everyone indifferent. */
   relations?: GraphEdge[];
   hour?: number;
+  /** The standing sky; absent = a world without weather. */
+  weather?: WeatherView | null;
   /**
    * Which of `entities` were made on this step (stamped with its number, which only `step` knows).
    * The rest keep step 0, so a later step shows the same thing as ordinary.
@@ -333,6 +336,7 @@ export function step({
   broadcasts = [],
   relations = [],
   hour = 10,
+  weather = null,
   bornIds = [],
 }: StepParts): StepEvent {
   stepCounter += 1;
@@ -358,6 +362,7 @@ export function step({
     broadcasts,
     entities: table,
     relations,
+    weather,
   };
 }
 

@@ -6,7 +6,7 @@
 import Phaser from "phaser";
 
 import { mix, toHex } from "../lib/color";
-import type { BroadcastSummary } from "../types";
+import type { BroadcastSummary, WeatherView } from "../types";
 import { type FxHost, emanateRings } from "./effects";
 import type { MapHud } from "./hud";
 import { FONT, PLATE_R, TEXT_RES, WRAP_W, drawPlate } from "./types";
@@ -19,6 +19,9 @@ const NOTICE_IN = 400;
 const NOTICE_HOLD = 2800;
 const NOTICE_OUT = 700;
 
+// The skies the map draws; the rest (clear, overcast) leave the ground to the day/night wash.
+const SKY_PHENOMENA = new Set(["rain", "snow", "wind"]);
+
 /** The slice of the scene the announcer needs, on top of the shared FX and weather ones. */
 export interface AnnounceHost extends FxHost, WeatherHost {
   readonly map: WorldMap;
@@ -29,6 +32,10 @@ export class Announcer {
   // The weather currently falling. NOT in the scene's `ephemeral` (destroyed at the next
   // step): a spell is retired instead — emission stops, the air clears, it disposes itself.
   private weather: WeatherSpell[] = [];
+  // The world's standing sky (`StepEvent.weather`). Unlike a broadcast's weather, retired every
+  // step, it keeps falling while it holds and is replaced only when the sky changes, so rain
+  // that lasts all day doesn't stutter at every step boundary.
+  private sky: { key: string; spell: WeatherSpell | null } = { key: "", spell: null };
   // Active world-wide broadcast. fx/fy are viewport FRACTIONS (resize-robust); a is
   // tween-driven alpha; pinBanner applies them.
   private broadcastHud?: { obj: Phaser.GameObjects.Container; fx: number; fy: number; a: number };
@@ -66,6 +73,21 @@ export class Announcer {
     );
     if (spell) this.weather.push(spell);
     return spell !== null;
+  }
+
+  /** Bring the standing sky in line with this step's. The whole map is under it. */
+  setSky(weather: WeatherView | null | undefined): void {
+    const drawn = weather && SKY_PHENOMENA.has(weather.sky) ? weather : null;
+    const key = drawn ? `${drawn.sky}:${drawn.severity}` : "";
+    if (key === this.sky.key) return;
+    this.sky.spell?.retire();
+    const spell = drawn
+      ? playWeather(this.host, drawn.sky, drawn.severity, this.weatherArea(undefined), {
+          tilePx: this.host.map.tileH,
+          zoom: this.host.cameras.main.zoom,
+        })
+      : null;
+    this.sky = { key, spell };
   }
 
   /**

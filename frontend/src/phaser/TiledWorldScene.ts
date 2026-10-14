@@ -843,6 +843,7 @@ export class TiledWorldScene
     // The previous weather is retired, not deleted: it finishes falling while this step runs,
     // since a shower that ends between two frames never looks like weather ending.
     this.announcer.retireWeather();
+    this.announcer.setSky(step.weather);
     // A sustained pose (see holdPose) outlives its step and ends when the figure has nothing
     // to do; whoever will pose again this step keeps it until playDeed replaces it, so a long
     // job does not flicker to idle. The test is "will he be given a pose" (ask deedBody), not

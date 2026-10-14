@@ -445,6 +445,15 @@ export interface StepEvent {
   entities: Record<string, EntityView>;
   // Directed relations as they stand at the end of this step — the same edges GET /graph serves.
   relations: GraphEdge[];
+  // The one sky this step ran under; null for a world without weather.
+  weather: WeatherView | null;
+}
+
+// The world's sky (backend engine.weather). `sky` names what the map draws for rain, snow and
+// wind with the same words as a broadcast's phenomenon; clear and overcast draw nothing.
+export interface WeatherView {
+  sky: string; // clear / overcast / rain / snow / wind
+  severity: string; // low / medium / high
 }
 
 // Relationship graph (GET /api/worlds/{id}/graph). Nodes are agents; edges are
