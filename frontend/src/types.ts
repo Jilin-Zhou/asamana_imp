@@ -493,8 +493,39 @@ export type MapSelect =
   | { kind: "location"; id: string }
   | { kind: "clear" };
 
+/**
+ * The stage narrator's script for one step (backend interaction/models.py StepNarration).
+ * Written for the audience only. `line` and `aside` beats quote the record verbatim.
+ */
+export interface NarrationBeat {
+  kind: string; // narration / line / aside
+  text: string;
+  speaker_id: string; // code layer — the join key; never rendered
+  speaker: string; // the name to print
+}
+
+export interface NarrationScene {
+  scene: number;
+  continues: boolean; // carries on the scene of the same number from the step before
+  location_id: string;
+  location_name: string;
+  stage_direction: string;
+  cast: { agent_id: string; name: string }[];
+  beats: NarrationBeat[];
+}
+
+export interface StepNarration {
+  step: number;
+  act: number;
+  opens_act: boolean;
+  time_label: string;
+  memo: string; // the running synopsis at this point
+  scenes: NarrationScene[];
+}
+
 // WebSocket envelope: the backend tags each frame with a type.
 export type WsFrame =
   | { type: "status"; data: { world_id: string; status: RunState } }
   | { type: "snapshot"; data: StepEvent }
-  | { type: "step"; data: StepEvent };
+  | { type: "step"; data: StepEvent }
+  | { type: "narration"; data: StepNarration };

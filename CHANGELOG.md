@@ -8,6 +8,8 @@ All notable changes to this project are documented in this file. The format is b
 
 - Action checks: PHYSICAL, COVERT and WORK are settled by a 3d6 roll against an LLM-assessed difficulty and edge, with five graded results from critical success to critical failure. The executor's narration writes the rolled result instead of deciding success, and a covert act's exposure follows the roll when someone is present to notice.
 - The narrative feed shows each rolled result's tier, the dice and the assessor's reason.
+- The stage narrator: after each step a background writer turns the step's record into a play script for the audience, in acts and scenes, with stage directions and narration around the characters' own lines quoted verbatim. Characters never read it. `engine.narration_enabled` turns it off.
+- A theater view beside the record in the world screen: the script up to the step the map shows; a scene heading pans the map to its place, and chase follows each new script's busiest scene.
 - `python -m tuning stats <world-id>`: action types, success rates and roll tiers counted from snapshots, without calling a model.
 
 ### Fixed
