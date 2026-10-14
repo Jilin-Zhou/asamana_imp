@@ -491,6 +491,26 @@ class PhysicalExecutor(ActionExecutor):
             return None, None
         return candidate, other
 
+    @staticmethod
+    def _opponent(
+        subject: "_Subject", *, agents: dict[str, "Agent"], environment: "EnvironmentSystem",
+    ) -> "Agent | None":
+        """Who can resist the act: the person it lands on, or whoever is holding the thing it
+        takes. Not a handover's recipient: taking it or not is his choice, not a contest."""
+        if subject.is_person:
+            return subject.target_agent
+        holder = subject.prior_owner_id
+        if holder is None or subject.actor_holds:
+            return None
+        other = agents.get(holder)
+        if (
+            other is None
+            or not other.is_active
+            or environment.get_body_location(holder) != environment.get_body_location(subject.actor_id)
+        ):
+            return None
+        return other
+
     async def _counterpart_effect(
         self, verdict: "_Verdict", subject: "_Subject", counterpart: "Agent", *,
         step: int,
@@ -580,6 +600,7 @@ class PhysicalExecutor(ActionExecutor):
                 agent, action_type=ActionType.PHYSICAL, intent=description, scene=scene,
                 step=step, expected_outcome=state.expected_outcome,
                 target_block=subject.target_block, details=recipient_line,
+                opponent=self._opponent(subject, agents=agents, environment=environment),
             )
             if agent is not None else None
         )

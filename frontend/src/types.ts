@@ -95,11 +95,23 @@ export interface ActionTarget {
  * in the engine's vocabulary, numbers spelled out. Only the observer ever sees these numbers; no
  * agent does. Read the enums through lib/contract and the words through lib/check.
  */
+// The abilities a roll drew on, by level (backend core.interfaces.check.AbilityBasis). A null
+// attribute counted nothing.
+export interface AbilityBasisView {
+  attribute: string | null; // lib/contract Attribute
+  attribute_level: number;
+  skill: string; // "" = no skill
+  skill_level: number;
+  opposing_attribute: string | null; // lib/contract Attribute; null = nobody resisted
+  opposing_level: number;
+}
+
 export interface CheckView {
   difficulty: string; // lib/contract Difficulty
-  edge: string; // lib/contract Edge; "even" when pure_chance
+  edge: string; // lib/contract Edge; the circumstances beyond the abilities; "even" when pure_chance
   pure_chance: boolean;
   dice: number[];
+  basis: AbilityBasisView;
   dc: number;
   modifier: number;
   total: number;
@@ -474,7 +486,15 @@ export interface AgentProfile {
   self_image: string;
   life_goal: string;
   secret: string;
+  abilities: AbilitiesView;
   is_main_character: boolean;
+}
+
+// A character's attributes (1–5, 3 = an ordinary adult) and skills (1–3), fixed at build
+// (backend core.interfaces.ability.Abilities).
+export interface AbilitiesView {
+  attributes: Record<string, number>; // keyed by lib/contract Attribute
+  skills: { name: string; level: number }[];
 }
 
 // Map focus/selection: the user can follow one or more agents and/or spotlight a

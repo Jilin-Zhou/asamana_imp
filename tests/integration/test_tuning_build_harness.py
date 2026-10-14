@@ -8,6 +8,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 
@@ -40,6 +41,7 @@ async def test_run_build_records_phases_and_llm_calls(container, test_config) ->
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
     container.llm_router = LLMRouter(providers)
 
     sink = InMemoryTraceSink()
@@ -54,6 +56,7 @@ async def test_run_build_records_phases_and_llm_calls(container, test_config) ->
         "world_build.theme_analysis",
         "world_build.cast_design",
         "world_build.agent_generation",
+        "world_build.ability_design",
         "world_build.initialization",
     }
     for p in sink.phases:
@@ -71,7 +74,7 @@ async def test_run_build_records_phases_and_llm_calls(container, test_config) ->
 
     # Every build-stage LLM call is captured with a non-empty prompt.
     scenes = {c.scene for c in sink.llm_calls}
-    assert {"world_building", "cast_design", "persona_generation"} <= scenes
+    assert {"world_building", "cast_design", "persona_generation", "ability_design"} <= scenes
     for call in sink.llm_calls:
         assert call.world_id == world_id
         assert call.prompt_messages and call.prompt_messages[0]["content"]

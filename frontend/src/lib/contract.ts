@@ -78,6 +78,16 @@ export const Edge = {
 } as const;
 export type EdgeValue = typeof Edge[keyof typeof Edge];
 
+// A character's five attributes, in display order; mirrors core.interfaces.ability.Attribute.
+export const Attribute = {
+  physique:  "physique",
+  agility:   "agility",
+  intellect: "intellect",
+  eloquence: "eloquence",
+  nerve:     "nerve",
+} as const;
+export type AttributeValue = typeof Attribute[keyof typeof Attribute];
+
 // COSTLY_SUCCESS is a success: it landed, at a price the outcome names.
 export const CheckTier = {
   critical_success: "critical_success",

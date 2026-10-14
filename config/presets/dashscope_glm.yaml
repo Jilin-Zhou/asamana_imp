@@ -39,6 +39,8 @@ llm:
       provider: dashscope_glm_pro
     cast_design:
       provider: dashscope_glm_pro
+    ability_design:
+      provider: dashscope_glm_pro
     world_building:
       provider: dashscope_glm_pro
       # Required: the 60s default can't cover thousands of tokens of thinking plus JSON. No web

@@ -768,6 +768,7 @@ class WorldInitializer:
                         "self_image": agent.personality.soul.self_image,
                         "life_goal": agent.personality.soul.life_goal,
                         "secret": agent.personality.soul.secret,
+                        "abilities": agent.personality.soul.abilities.to_dict(),
                         "is_main_character": agent.is_main_character,
                     }
                     for agent_id, agent in agents.items()

@@ -7,6 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Iterable, Sequence
 
 from agent.goals import GoalEntity, GoalStatus, is_live_goal, text_to_long_term_goal_entity
+from core.interfaces.ability import Abilities
 from core.interfaces.action import ActionType
 from core.interfaces.condition import BodyCondition
 
@@ -185,6 +186,9 @@ class SoulLayer:
     # perception, the directory, death notices or a bystander's brief.
     secret: str = ""
     hard_constraints: tuple[str, ...] = field(default_factory=tuple)
+    # Attributes and skills, fixed at build. Only the bearer's own profile renders them, as words;
+    # a check reads the levels.
+    abilities: Abilities = field(default_factory=Abilities)
     # Innate needs, immutable identity: each need's lifelong weight, label and is_hidden. Their
     # ``intensity`` is only the build-time seed; the live value is StateLayer.need_intensities,
     # combined by PersonalityLayer.current_needs().
@@ -335,6 +339,8 @@ class PersonalityLayer:
             lines.append(f"核心性格：{soul.traits_text()}。")
         if soul.core_values:
             lines.append(f"核心价值观：{soul.values_text()}。")
+        if abilities := soul.abilities.persona_line():
+            lines.append(f"{abilities}。")
         if soul.self_image:
             lines.append(f"自我认知：{soul.self_image}")
         if soul.life_goal:

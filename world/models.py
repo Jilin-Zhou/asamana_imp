@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from agent.need import NeedState, NeedType, build_innate_needs
 from agent.personality import SECRET_LABEL, EmotionState, EmotionType, SoulLayer, parse_emotion_type
 from agent.relation import NEUTRAL_AFFECTION, NEUTRAL_TRUST
+from core.interfaces.ability import Abilities
 from core.interfaces.action import ErrandOrder
 from core.interfaces.condition import BodyCondition
 from core.interfaces.directory import WorldDirectory
@@ -651,6 +652,7 @@ class AgentDefinition:
             "life_goal": self.soul.life_goal,
             "secret": self.soul.secret,
             "hard_constraints": list(self.soul.hard_constraints),
+            "abilities": self.soul.abilities.to_dict(),
         }
 
     @property
@@ -721,6 +723,7 @@ class AgentDefinition:
             life_goal=sd.get("life_goal"),
             secret=sd.get("secret", ""),
             hard_constraints=sd.get("hard_constraints", []),
+            abilities=Abilities.from_dict(sd.get("abilities")),
             innate_needs=build_innate_needs(active, hidden),
         )
         ie = data.get("initial_emotion") or {}

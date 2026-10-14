@@ -142,6 +142,9 @@ llm:
     cast_design:
       provider: dashscope
       model: deepseek-v4-pro
+    ability_design:
+      provider: dashscope
+      model: deepseek-v4-pro
 
     # Theme analysis: the world's foundation, and the only scene with web search.
     world_building:

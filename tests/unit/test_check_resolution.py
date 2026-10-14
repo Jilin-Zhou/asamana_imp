@@ -94,7 +94,7 @@ def test_record_derives_its_numbers_from_the_dice() -> None:
     record = CheckRecord(
         difficulty=Difficulty.HARD, edge=Edge.BETTER, pure_chance=False, dice=(4, 5, 3),
     )
-    assert (record.dc, record.modifier, record.total) == (14, 2, 14)
+    assert (record.dc, record.modifier, record.total) == (14, 1, 13)
     assert record.tier is CheckTier.COSTLY_SUCCESS
 
 
@@ -113,7 +113,7 @@ def test_record_round_trips_through_its_dict() -> None:
     )
     payload = record.to_dict()
     assert payload["tier"] == record.tier.value
-    assert payload["total"] == 7
+    assert payload["total"] == 8
     assert CheckRecord.from_dict(payload) == record
 
 

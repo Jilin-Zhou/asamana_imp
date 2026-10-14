@@ -1,7 +1,7 @@
 """Rolling checks for PHYSICAL, COVERT and WORK (see ``core.interfaces.check``).
 
-``CheckAssessor`` does parts 1 and 2: one functional LLM call names certainty, difficulty and
-edge, then code rolls. The executors do part 3, narrating the ``CheckTier`` they are handed in
+``CheckAssessor`` does parts 1 and 2: one functional LLM call names certainty, difficulty, the
+abilities in play and the situational edge, then code adds them up and rolls. The executors do part 3, narrating the ``CheckTier`` they are handed in
 the words of ``tier_phrase``.
 
 TALK, SEND_MESSAGE, MOVE, REST and ERRAND never roll: a talk's outcome is the other side's own
@@ -16,11 +16,16 @@ from typing import TYPE_CHECKING
 
 from core.coerce import coerce_enum
 from core.context import GivenFacts, annotate_call
+from core.interfaces.ability import (
+    ATTRIBUTE_BASELINE, Abilities, Attribute, Skill, attribute_word, skill_word,
+)
 from core.interfaces.action import ActionType
 from core.interfaces.check import (
-    DICE_COUNT, DIE_SIDES, Certainty, CheckRecord, CheckTier, Difficulty, Edge,
+    DICE_COUNT, DIE_SIDES, AbilityBasis, Certainty, CheckRecord, CheckTier, Difficulty, Edge,
 )
-from core.interfaces.llm import LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget
+from core.interfaces.llm import (
+    IndexedRef, LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget,
+)
 from core.logging import get_logger
 from core.prompts import SituationVoice, condition_line, vitality_line
 
@@ -45,15 +50,17 @@ def roll_check(
     *,
     pure_chance: bool,
     rng: random.Random,
+    basis: AbilityBasis = AbilityBasis(),
     reason: str = "",
 ) -> CheckRecord:
-    """Roll 3d6 for one check. A pure-chance check records an even edge: luck owes nothing to
-    who is holding the dice."""
+    """Roll 3d6 for one check. A pure-chance check records no abilities and an even edge: luck
+    owes nothing to who is holding the dice."""
     return CheckRecord(
         difficulty=difficulty,
         edge=Edge.EVEN if pure_chance else edge,
         pure_chance=pure_chance,
         dice=tuple(rng.randint(1, DIE_SIDES) for _ in range(DICE_COUNT)),
+        basis=AbilityBasis() if pure_chance else basis,
         reason=reason,
     )
 
@@ -115,12 +122,38 @@ _KIND_LABELS: dict[ActionType, str] = {
 
 _REASON_MAX_CHARS = 80
 
+_ATTRIBUTES = tuple(Attribute)
+_ATTRIBUTE_LEGEND = "\n".join(f"  - {a.label}：{a.scope}" for a in _ATTRIBUTES)
+
+
+def _ability_block(abilities: Abilities, *, with_skills: bool) -> str:
+    """Numbered levels in words, the indices the assessor answers with."""
+    lines = ["属性："]
+    lines += [f"{i}. {a.label}：{attribute_word(abilities.level(a))}" for i, a in enumerate(_ATTRIBUTES, 1)]
+    if with_skills:
+        lines.append("专长：")
+        lines += [f"{i}. {s.name}：{skill_word(s.level)}" for i, s in enumerate(abilities.skills, 1)]
+        if not abilities.skills:
+            lines.append("（无）")
+    return "\n".join(lines)
+
+
+# An index the assessor answers with that is 0, garbage or out of range reads as unfilled.
+def _attribute_at(raw: object) -> Attribute | None:
+    resolved = IndexedRef([a.value for a in _ATTRIBUTES]).resolve([raw])
+    return Attribute(resolved[0]) if resolved else None
+
+
+def _skill_at(skills: tuple[Skill, ...], raw: object) -> Skill | None:
+    resolved = IndexedRef([str(i) for i in range(len(skills))]).resolve([raw])
+    return skills[int(resolved[0])] if resolved else None
+
 # One system prompt for all three kinds, so every assessment shares one cached prefix.
 _SYSTEM_PROMPT = f"""\
 【任务】
 你是中立的世界裁决者。下面是一次即将落定的行动。你**不写结果**，只做两件事：
 1. 判断它的结果有没有悬念；
-2. 有悬念时，给出它的难度，以及行动者在这件事上的优势。
+2. 有悬念时，给出它的难度、它凭的能力，以及能力之外的情境利弊。
 结果由之后的掷骰决定，所以你不必、也不能替它定成败。
 
 【判断原则】
@@ -128,17 +161,23 @@ _SYSTEM_PROMPT = f"""\
   - sure_success：按常理必然做成、没有任何阻力。
   - sure_failure：按所给条件根本做不到，或意图与目标明显冲突又说不出理由。
   - uncertain：其余一切——有人会抵抗、要靠本事或运气、现场有变数。拿不准时选 uncertain。
-- 纯运气（pure_chance）：成败只看运气、与本事无关时为 true（掷骰、抽签、赌大小、刮彩票）；此时 edge 不计。
+- 纯运气（pure_chance）：成败只看运气、与本事无关时为 true（掷骰、抽签、赌大小、刮彩票）；此时能力与情境都不计。
 - 难度（difficulty）：按「一个寻常人在当下条件下做这件事」来定，**不看行动者是谁**：
   - easy：寻常人多半能成
   - normal：寻常人成败各半
   - hard：寻常人多半不成
   - very_hard：寻常人几乎不可能
   纯运气时，difficulty 表示中的机会：easy 多半能中，very_hard 几乎中不了。
-- 优势（edge）：行动者在这件事上比寻常人强多少、弱多少；对人行动时，就是双方的实力对比：
-  - much_worse 明显劣势 / worse 略处劣势 / even 相当 / better 略占优势 / much_better 明显优势
-  - 计入本事、体力、伤势、此刻的处境（如被缚）、人数、器械、防备与现场条件。
-- 不得因行动者身份显赫或性格果决就判他占优：性格说明他会怎么做，不说明他做得成。
+- 用上的能力（下面给出行动者的能力，对人行动时还有对手的能力；属性的涵盖如下）：
+{_ATTRIBUTE_LEGEND}
+  - attribute_index：这件事主要凭行动者哪项属性，填属性编号。
+  - skill_index：行动者有对口的专长就填它的编号，没有填 0。专长要真对口：会剑术不等于会撬锁。
+  - opposing_attribute_index：对手凭哪项属性抵抗，填对手的属性编号；没给对手的能力、
+    或对手不抵抗（配合、昏睡、毫无察觉）填 0。
+- 情境（edge）：能力之外的处境给行动者多大便宜。**属性和专长另有算法，这里不要再算一遍**：
+  - much_worse 明显不利 / worse 略为不利 / even 无所谓利弊 / better 略为有利 / much_better 明显有利
+  - 计入体力、伤势、此刻的处境（如被缚）、人数、器械、防备与现场条件。
+- 不得因行动者身份显赫或性格果决就给他高的属性或有利的情境：性格说明他会怎么做，不说明他做得成。
 - 在场旁人是证据：结合各自的背景与性情，权衡他们会阻拦、协助还是旁观；标注的「此刻意图」是他们**同时**
   在试图做、尚未落定的事，可以计入，但不能当成已经发生。
 
@@ -149,20 +188,20 @@ _SYSTEM_PROMPT = f"""\
     明摆着不接为 sure_failure，说不准才是 uncertain。
   - 从别人手上、身上拿东西：持有者醒着还是睡着、留不留神、护不护得住，连同双方实力与旁人立场，都要计入。
 - 暗中行动：难处在于既接得住此处发生的事，又不被察觉。在场的人越多、越闲、越留神就越难；
-  四下无人时容易。edge 看行动者藏身与留意的本事、对此地的熟悉、在场者是否忙于他事。
-- 独自做事：难度看这件事本身的繁难与手边条件（材料、工具、时间够不够）；edge 看行动者的本事、学识、
-  此刻的精力与心绪。熟手做寻常小事为 sure_success；缺了必需的东西又无从替代为 sure_failure。
+  四下无人时容易。edge 看对此地的熟悉、在场者是否忙于他事、有无遮掩。
+- 独自做事：难度看这件事本身的繁难与手边条件（材料、工具、时间够不够）；edge 看此刻的精力与心绪、
+  手边条件是否顺手。熟手做寻常小事为 sure_success；缺了必需的东西又无从替代为 sure_failure。
 
 【输出】
 严格输出以下 JSON，不要任何多余内容。**先在 reason 里写依据，再给结论**：
 - reason：这件事难在哪、行动者凭什么占优或吃亏（≤{_REASON_MAX_CHARS}字）。
-- certainty 不是 uncertain 时，difficulty 与 edge 照填，不会被采用。
-{{"reason": "≤{_REASON_MAX_CHARS}字", "certainty": "sure_success或uncertain或sure_failure", "pure_chance": true或false, "difficulty": "easy或normal或hard或very_hard", "edge": "much_worse或worse或even或better或much_better"}}
+- certainty 不是 uncertain 时，其余字段照填，不会被采用。
+{{"reason": "≤{_REASON_MAX_CHARS}字", "certainty": "sure_success或uncertain或sure_failure", "pure_chance": true或false, "difficulty": "easy或normal或hard或very_hard", "attribute_index": 属性编号, "skill_index": 专长编号或0, "opposing_attribute_index": 对手属性编号或0, "edge": "much_worse或worse或even或better或much_better"}}
 """
 
-# reason ≤80 chars ≈120 + certainty ≈5 + pure_chance ≈3 + difficulty ≈4 + edge ≈5
-# + 5-field JSON structure ≈25 → ≈162 tok.
-_MAX_TOKENS = output_budget(162)
+# reason ≤80 chars ≈120 + certainty ≈5 + pure_chance ≈3 + difficulty ≈4 + three indices ≈9
+# + edge ≈5 + 8-field JSON structure ≈40 → ≈186 tok.
+_MAX_TOKENS = output_budget(186)
 
 
 class CheckAssessor:
@@ -191,13 +230,17 @@ class CheckAssessor:
         expected_outcome: str = "",
         target_block: str = "",
         details: str = "",
+        opponent: "Agent | None" = None,
     ) -> CheckVerdict | None:
         """Assess and roll one act. ``None`` when the assessment can't happen (LLM failure): the
         caller returns an ``adjudication_failed`` null step, so nothing is rolled or invented.
 
         ``target_block`` is what the act is aimed at, as the executor already renders it for its
-        own judge; ``details`` holds extra "- 键：值" lines for the 【行动】 block.
+        own judge; ``details`` holds extra "- 键：值" lines for the 【行动】 block. ``opponent``
+        is the person who can resist it, whose attributes the roll may be set against.
         """
+        abilities = agent.personality.soul.abilities
+        opposing = opponent.personality.soul.abilities if opponent is not None else None
         state = agent.personality.state
         actor_vitality = vitality_line(state.vitality, voice=SituationVoice.THIRD, lead="")
         actor_condition = condition_line(
@@ -205,14 +248,21 @@ class CheckAssessor:
             now_step=step, seconds_per_step=self._seconds_per_step,
         )
         target_part = f"\n\n【行动对象】\n{target_block}" if target_block else ""
+        opponent_part = (
+            f"\n\n【对手的能力】\n{_ability_block(opposing, with_skills=False)}" if opposing is not None else ""
+        )
+        actor_abilities = _ability_block(abilities, with_skills=True)
         expected_part = f"\n- 期望结果：{expected_outcome}" if expected_outcome else ""
         user = f"""\
 【行动者】（判断依据：你不站在他的立场）
 {agent.personality.to_prompt_context(include_emotion=True, include_goals=False)}
 {actor_vitality}{actor_condition}
 
+【行动者的能力】
+{actor_abilities}
+
 【现场】
-{scene or "（现场情况不明）"}{target_part}
+{scene or "（现场情况不明）"}{target_part}{opponent_part}
 
 【行动】
 - 类别：{_KIND_LABELS[action_type]}
@@ -224,6 +274,7 @@ class CheckAssessor:
             .add("行动者体力", actor_vitality)
             .add("行动者处境", actor_condition)
             .add("现场", scene or "情况不明")
+            .add("行动者能力", actor_abilities)
             .add("行动对象", target_block)
             .add("意图", intent)
             .add("期望结果", expected_outcome)
@@ -254,11 +305,25 @@ class CheckAssessor:
             return CheckVerdict(tier=CheckTier.SUCCESS)
         if certainty == Certainty.SURE_FAILURE:
             return CheckVerdict(tier=CheckTier.FAILURE)
+        attribute = _attribute_at(data.get("attribute_index"))
+        skill = _skill_at(abilities.skills, data.get("skill_index"))
+        against = _attribute_at(data.get("opposing_attribute_index")) if opposing is not None else None
+        basis = AbilityBasis(
+            attribute=attribute,
+            attribute_level=abilities.level(attribute) if attribute is not None else ATTRIBUTE_BASELINE,
+            skill=skill.name if skill is not None else "",
+            skill_level=skill.level if skill is not None else 0,
+            opposing_attribute=against,
+            opposing_level=(
+                opposing.level(against) if opposing is not None and against is not None else ATTRIBUTE_BASELINE
+            ),
+        )
         record = roll_check(
             coerce_enum(Difficulty, data.get("difficulty"), default=Difficulty.NORMAL),
             coerce_enum(Edge, data.get("edge"), default=Edge.EVEN),
             pure_chance=coerce_bool(data.get("pure_chance"), False),
             rng=self._rng(step, agent.agent_id, action_type),
+            basis=basis,
             reason=str(data.get("reason") or "").strip(),
         )
         return CheckVerdict(tier=record.tier, record=record)

@@ -2,10 +2,11 @@
 
 A check is settled in three parts, split by who may decide what (CLAUDE.md Design Principle 5):
 
-1. A functional judge reads the scene and names the act's ``Difficulty`` and the actor's ``Edge``
-   over it. Subjective, so LLM (``engine.check.CheckAssessor``).
-2. Code rolls 3d6 + the edge's modifier against the difficulty and reads off a ``CheckTier``.
-   An objective threshold over structured signals, so rule.
+1. A functional judge reads the scene and names the act's ``Difficulty``, which of the actor's
+   abilities it draws on (and the opponent's, against a person), and the ``Edge`` the
+   circumstances give beyond them. Subjective, so LLM (``engine.check.CheckAssessor``).
+2. Code adds the abilities' levels and the edge into one modifier, rolls 3d6 + modifier against
+   the difficulty and reads off a ``CheckTier``. Arithmetic over structured signals, so rule.
 3. The executor's narration writes the tier it is handed; it never decides success itself.
 
 The same rule holds for every agent: narrative tier never switches it.
@@ -21,6 +22,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from core.coerce import coerce_enum
+from core.interfaces.ability import ATTRIBUTE_BASELINE, ATTRIBUTE_MAX, ATTRIBUTE_MIN, SKILL_MAX, Attribute
 
 
 class Difficulty(str, Enum):
@@ -49,8 +51,9 @@ _DC: dict[Difficulty, int] = {
 
 
 class Edge(str, Enum):
-    """The actor's standing on this act against an ordinary person; against a person, the balance
-    between the two sides (strength, wounds, numbers, weapons, wariness)."""
+    """What the circumstances give the actor beyond the abilities a check already counts: wounds,
+    being bound, numbers, weapons, preparation, wariness, footing. Narrower than an ability's
+    range, so who someone is outweighs where they stand."""
 
     MUCH_WORSE  = "much_worse"
     WORSE       = "worse"
@@ -64,11 +67,11 @@ class Edge(str, Enum):
 
 
 _MODIFIER: dict[Edge, int] = {
-    Edge.MUCH_WORSE:  -4,
-    Edge.WORSE:       -2,
+    Edge.MUCH_WORSE:  -2,
+    Edge.WORSE:       -1,
     Edge.EVEN:         0,
-    Edge.BETTER:       2,
-    Edge.MUCH_BETTER:  4,
+    Edge.BETTER:       1,
+    Edge.MUCH_BETTER:  2,
 }
 
 
@@ -112,8 +115,8 @@ _SUCCEEDING = frozenset({
 })
 
 # (lowest margin, tier), read top-down. With 3d6 an even match at NORMAL lands 5/33/25/33/5 % from
-# critical success down to critical failure, and each edge or difficulty step shifts that by about
-# one band; tests/unit/test_check_resolution.py enumerates all 216 rolls to hold it there.
+# critical success down to critical failure, and each difficulty step (3 points of modifier) shifts
+# that by about one band; tests/unit/test_check_resolution.py enumerates all 216 rolls to hold it.
 # 3d6 rather than d20: on a flat die a capable actor fails as often as a middling one.
 _TIER_FLOORS: tuple[tuple[int, CheckTier], ...] = (
     (5,  CheckTier.CRITICAL_SUCCESS),
@@ -127,6 +130,66 @@ DIE_SIDES: int = 6
 
 
 @dataclass(frozen=True)
+class AbilityBasis:
+    """The abilities one roll drew on, as their levels at the time (``core.interfaces.ability``).
+
+    No attribute: the assessor named none that applies. No opposing attribute: nobody resists.
+    """
+
+    attribute: Attribute | None = None
+    attribute_level: int = ATTRIBUTE_BASELINE
+    skill: str = ""
+    skill_level: int = 0
+    opposing_attribute: Attribute | None = None
+    opposing_level: int = ATTRIBUTE_BASELINE
+
+    @property
+    def modifier(self) -> int:
+        """The actor's attribute and skill, less the opponent's attribute, each from the baseline."""
+        own = self.attribute_level - ATTRIBUTE_BASELINE if self.attribute is not None else 0
+        against = self.opposing_level - ATTRIBUTE_BASELINE if self.opposing_attribute is not None else 0
+        return own + self.skill_level - against
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "attribute": self.attribute.value if self.attribute is not None else None,
+            "attribute_level": self.attribute_level,
+            "skill": self.skill,
+            "skill_level": self.skill_level,
+            "opposing_attribute": (
+                self.opposing_attribute.value if self.opposing_attribute is not None else None
+            ),
+            "opposing_level": self.opposing_level,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "AbilityBasis":
+        """Never raises; anything unreadable is no ability at all."""
+        if not isinstance(payload, Mapping):
+            return cls()
+
+        def attribute(key: str) -> Attribute | None:
+            value = payload.get(key)
+            return Attribute(value) if value in {a.value for a in Attribute} else None
+
+        def level(key: str, low: int, high: int, default: int) -> int:
+            try:
+                return max(low, min(high, int(payload.get(key, default))))
+            except (TypeError, ValueError):
+                return default
+
+        skill = str(payload.get("skill") or "")
+        return cls(
+            attribute=attribute("attribute"),
+            attribute_level=level("attribute_level", ATTRIBUTE_MIN, ATTRIBUTE_MAX, ATTRIBUTE_BASELINE),
+            skill=skill,
+            skill_level=level("skill_level", 0, SKILL_MAX, 0) if skill else 0,
+            opposing_attribute=attribute("opposing_attribute"),
+            opposing_level=level("opposing_level", ATTRIBUTE_MIN, ATTRIBUTE_MAX, ATTRIBUTE_BASELINE),
+        )
+
+
+@dataclass(frozen=True)
 class CheckRecord:
     """One roll as it happened. Code layer only: the API and the renderer read it; no prompt,
     memory or dialogue ever does (the narration gets the tier as words).
@@ -136,9 +199,10 @@ class CheckRecord:
 
     difficulty: Difficulty
     edge: Edge
-    # Luck alone decides (dice, lots, a lottery ticket): the edge doesn't count.
+    # Luck alone decides (dice, lots, a lottery ticket): neither abilities nor the edge count.
     pure_chance: bool
     dice: tuple[int, ...]
+    basis: AbilityBasis = AbilityBasis()
     # The assessor's rationale. Third person and god-view, like ``ActionResult.outcome``: for the
     # observer's display only.
     reason: str = ""
@@ -149,7 +213,7 @@ class CheckRecord:
 
     @property
     def modifier(self) -> int:
-        return 0 if self.pure_chance else self.edge.modifier
+        return 0 if self.pure_chance else self.basis.modifier + self.edge.modifier
 
     @property
     def total(self) -> int:
@@ -166,6 +230,7 @@ class CheckRecord:
             "edge": self.edge.value,
             "pure_chance": self.pure_chance,
             "dice": list(self.dice),
+            "basis": self.basis.to_dict(),
             "dc": self.dc,
             "modifier": self.modifier,
             "total": self.total,
@@ -196,5 +261,6 @@ class CheckRecord:
             edge=coerce_enum(Edge, payload.get("edge"), default=Edge.EVEN),
             pure_chance=bool(payload.get("pure_chance", False)),
             dice=dice,
+            basis=AbilityBasis.from_dict(payload.get("basis")),
             reason=str(payload.get("reason") or ""),
         )

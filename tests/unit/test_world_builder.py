@@ -9,6 +9,7 @@ from core.container import Container
 from engine.application import NarrativeApplication
 from core.interfaces.llm import LLMMessage, LLMProvider, LLMResponse, LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE
 from world.builder import _canonicalize_agent_locations, _purge_orphan_references
 from world.builders.agent_generator import AgentGenerator
 from world.builders.cast_designer import CastDesigner
@@ -539,6 +540,7 @@ async def test_runtime_decision_prompt_does_not_leak_narrative_pitch(container, 
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=world_response)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=cast_response)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
     providers[LLMScene.AGENT_DECISION_MAIN] = decision_spy_main
     container.llm_router = LLMRouter(providers)
 

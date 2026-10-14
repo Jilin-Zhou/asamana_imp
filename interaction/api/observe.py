@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.interfaces.ability import Abilities
 from core.logging import get_logger
 
 # WebSocket must be importable at module scope: with `from __future__ import annotations`,
@@ -120,6 +121,9 @@ def build_observe_router(services: ApiServices) -> Any:
             self_image=entry.get("self_image", ""),
             life_goal=entry.get("life_goal", ""),
             secret=entry.get("secret", ""),
+            # Re-read rather than passed through, so a world built before abilities shows the
+            # baseline it actually runs on.
+            abilities=Abilities.from_dict(entry.get("abilities")).to_dict(),
             is_main_character=bool(entry.get("is_main_character", False)),
         )
 

@@ -115,6 +115,8 @@ class AgentProfile:
     self_image: str = ""
     life_goal: str = ""
     secret: str = ""
+    # ``core.interfaces.ability.Abilities.to_dict``: attribute levels by key, and named skills.
+    abilities: dict[str, Any] = field(default_factory=dict)
 
 
 def _target_view(raw: Any) -> "ActionTargetView":
@@ -176,6 +178,8 @@ class CheckView:
     edge: str         # much_worse … much_better; "even" when pure_chance
     pure_chance: bool
     dice: list[int]
+    # ``AbilityBasis.to_dict``: the attribute, skill and opposing attribute rolled on, by level.
+    basis: dict[str, Any]
     dc: int
     modifier: int
     total: int
