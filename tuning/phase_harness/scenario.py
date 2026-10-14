@@ -208,6 +208,11 @@ async def apply_action_scene(scenario: dict, world: World, run_step: int, id_by_
             is_takeable=bool(it.get("takeable", False)),
         ))
 
+    # money: {person: amount} — what each carries. Added to whatever the build gave them.
+    for ref, amount in (scene.get("money") or {}).items():
+        holder = actor_id if ref in ("self", "me") else resolve_ref(str(ref), id_by_name, valid_ids)
+        env.add_money(int(amount), holder_id=holder)
+
     # The no-cognition tier: a scenario that sends someone on an errand needs that person to exist first. Name order, so action.bearer can refer to them by name.
     for spec in scene.get("npcs", []) or []:
         env.spawn_npc(

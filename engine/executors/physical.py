@@ -17,6 +17,7 @@ from core.interfaces.action import (
 )
 from core.interfaces.check import CheckTier
 from core.interfaces.directory import WorldDirectory
+from core.interfaces.economy import Economy
 from core.coerce import coerce_float, coerce_int, coerce_str
 from core.interfaces.llm import LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget
 from core.interfaces.trace import Stage
@@ -433,6 +434,8 @@ class PhysicalExecutor(ActionExecutor):
         if item is None or not verdict.success:
             return []
         actor_name = self._directory.agent_name(subject.actor_id)
+        # Onlookers see money change hands, not how much.
+        seen = f"一些{item.name}" if item.is_money else item.name
         if verdict.deed == Deed.DESTROY:
             return [EntityStateChange(
                 entity_id=item.entity_id,
@@ -445,7 +448,7 @@ class PhysicalExecutor(ActionExecutor):
                 entity_id=item.entity_id,
                 owner_id=subject.actor_id,
                 quantity=verdict.amount_moved,
-                perception=scene_line(location, f"{actor_name}拿起了{item.name}。"),
+                perception=scene_line(location, f"{actor_name}拿起了{seen}。"),
             )]
         if verdict.deed == Deed.RELINQUISH:
             recipient_id = subject.recipient_id
@@ -455,8 +458,8 @@ class PhysicalExecutor(ActionExecutor):
                 location_id=None if recipient_id else environment.get_body_location(subject.actor_id),
                 quantity=verdict.amount_moved,
                 perception=scene_line(location, (
-                    f"{actor_name}把{item.name}交到了{self._directory.agent_name(recipient_id)}手上。"
-                    if recipient_id else f"{actor_name}放下了{item.name}。"
+                    f"{actor_name}把{seen}交到了{self._directory.agent_name(recipient_id)}手上。"
+                    if recipient_id else f"{actor_name}放下了{seen}。"
                 )),
             )]
         return [EntityStateChange(
@@ -520,7 +523,7 @@ class PhysicalExecutor(ActionExecutor):
 
     async def _counterpart_effect(
         self, verdict: "_Verdict", subject: "_Subject", counterpart: "Agent", *,
-        step: int,
+        step: int, economy: Economy,
     ) -> TargetAgentEffect:
         """The counterpart's effect: experience from the reaction stage, harm from the judge."""
         actor_name = self._directory.agent_name(subject.actor_id)
@@ -533,8 +536,13 @@ class PhysicalExecutor(ActionExecutor):
             else _POSSESSION_EVENT_LINES.get(verdict.deed, "")
         )
         if template and subject.item is not None:
+            # Whoever lost or received money knows how much.
+            item_name = (
+                economy.amount_text(verdict.amount_moved)
+                if subject.item.is_money and verdict.amount_moved else subject.item.name
+            )
             event_line = (
-                f"{template.format(actor=actor_name, item=subject.item.name)}"
+                f"{template.format(actor=actor_name, item=item_name)}"
                 f"，结果：{'做成了' if verdict.success else '没能做成'}"
             )
         effect = await self._llm_target_reaction(
@@ -658,7 +666,7 @@ class PhysicalExecutor(ActionExecutor):
         target_effects: list[TargetAgentEffect] = []
         if counterpart_agent is not None:
             target_effects.append(await self._counterpart_effect(
-                verdict, subject, counterpart_agent, step=step,
+                verdict, subject, counterpart_agent, step=step, economy=environment.economy,
             ))
 
         # An Npc takes only a condition; harm, emotion and relation have nowhere to go. Its
@@ -846,6 +854,12 @@ class PhysicalExecutor(ActionExecutor):
             return None
 
         expected_part = f"\n- 期望结果：{expected_outcome}" if expected_outcome else ""
+        # Read beside the tier, where "better than he wanted" would otherwise mean more money than
+        # there was at stake; the code caps the sum anyway, so the prose must not exceed it.
+        stake_note = (
+            "\n（钱数以【行动】里的涉及钱数为上限：做得再好也不会多出钱来，好处要写在别处，"
+            "如手脚干净、无人察觉、顺带看清了什么。旁人看不出数目：outcome 不写钱数，fact 写清。）" if stake else ""
+        )
         # Evidence for the escape hatch: whether a bound man struggling gets free.
         actor_condition_line = condition_line(
             agent.personality.state.condition, voice=SituationVoice.THIRD,
@@ -937,7 +951,8 @@ class PhysicalExecutor(ActionExecutor):
         if stake:
             entity_fields += (
                 ' "amount_moved": 这一动实际经手的钱数（整数，不超过【行动】里写的涉及钱数；'
-                '有代价的成功可以只到手一部分；没做成填 0）,'
+                '有代价的成功可以只到手一部分；没做成填 0）。fact 里写到的钱数必须就是它；'
+                'outcome 是旁人眼里的样子，只写钱换了手、不写数目；大成功的好处不在多拿钱，而在手脚干净、没人察觉之类,'
             )
 
         # deed is the act, answered regardless of success; candidates narrow by target shape.
@@ -1015,7 +1030,7 @@ class PhysicalExecutor(ActionExecutor):
 - 意图：{description}{expected_part}{recipient_line}
 
 【已定结果】
-{tier_phrase(tier, voice=SituationVoice.THIRD)}
+{tier_phrase(tier, voice=SituationVoice.THIRD)}{stake_note}
 
 依上面说定的 JSON 格式给出裁决（reason 在前），只输出 JSON、不写任何多余内容。"""
         # Same source as the user message above: every fact this adjudication can see.

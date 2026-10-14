@@ -105,13 +105,14 @@ def _script(*scenes: dict[str, Any], memo: str = "甲乙在殿上说了话") -> 
     return {"scenes": list(scenes), "memo": memo}
 
 
-async def test_lines_are_quoted_verbatim_and_bad_indices_dropped() -> None:
+async def test_lines_are_quoted_verbatim_asides_distilled_and_bad_indices_dropped() -> None:
     router = _Router(_script(
         {"location_index": 1, "stage_direction": "殿内灯暗", "beats": [
             {"kind": "line", "line_index": 1},
             {"kind": "line", "line_index": 2},      # spoken in the yard: not this scene's
             {"kind": "line", "line_index": 9},      # out of range
-            {"kind": "aside", "monologue_index": 1},
+            {"kind": "aside", "monologue_index": 1, "text": "不能再拖了。"},
+            {"kind": "aside", "monologue_index": 1},  # no words: the raw monologue never goes on stage
             {"kind": "narration", "text": "一"}, {"kind": "narration", "text": "二"},
             {"kind": "narration", "text": "三"}, {"kind": "narration", "text": "四"},
         ]},
@@ -134,7 +135,10 @@ async def test_lines_are_quoted_verbatim_and_bad_indices_dropped() -> None:
     beats = saved["scenes"][0]["beats"]
     assert {"kind": "line", "speaker_id": "a", "speaker": "甲", "text": "兵符何在？"} in beats
     assert not any(b.get("text") == "院中无人。" for b in beats)
-    assert {"kind": "aside", "speaker_id": "a", "speaker": "甲", "text": "此事不能再拖。"} in beats
+    # The aside is the narrator's distillation, attributed by index to whose thought it was.
+    assert [b for b in beats if b["kind"] == "aside"] == [
+        {"kind": "aside", "speaker_id": "a", "speaker": "甲", "text": "不能再拖了。"},
+    ]
     assert [b["text"] for b in beats if b["kind"] == "narration"] == ["一", "二", "三"]
     event = queue.get_nowait()
     assert event["type"] == "narration" and event["step"] == 3

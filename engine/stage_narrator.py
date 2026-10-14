@@ -42,6 +42,7 @@ _MAX_BEATS = 8
 _MAX_NARRATION_BEATS = 3
 _STAGE_DIRECTION_CHARS = 60
 _NARRATION_CHARS = 80
+_ASIDE_CHARS = 40
 _MEMO_CHARS = 100
 # How far back a restore looks for the last script to continue from.
 _RESTORE_LOOKBACK = 50
@@ -53,7 +54,9 @@ _SYSTEM_PROMPT = f"""\
 
 【原则】
 - 只演记录里有的事：不新增人物、动作、对白或结果。记录说没做成就是没做成，标明的判定结果要在旁白里演出来。
-- 台词与心声不由你写：要用某句台词，引用它的编号（line_index）；要把某人的心声作独白，引用它的编号（monologue_index）。
+- 台词不由你写：要用某句台词，引用它的编号（line_index），原话照登。
+- 独白取自心声：先注明出自哪条心声（monologue_index），再用他自己的口吻把其中对人对事动的心思改写成一句（≤{_ASIDE_CHARS}字）。
+  只取心声里有的意思，不添新事；心声里在盘算「名单上有谁、能选哪种行动、短期目标里哪一条、只能传讯」之类的后台话，一律不取。
 - 旁白用第三人称，人物称名字，不写任何编号、步数或点数。
 - 每场的节奏由你安排：台词、独白与旁白可以穿插，挑最有戏的放进来，不必全用。
 - 前情提要只用来接续，不要复述。
@@ -63,15 +66,16 @@ _SYSTEM_PROMPT = f"""\
 严格输出以下 JSON，不要任何多余内容。场的顺序与下面给的地点顺序一致，每处一场：
 - location_index：这一场在第几处（下面的编号）。
 - stage_direction：舞台提示（≤{_STAGE_DIRECTION_CHARS}字）。
-- beats：这一场的拍子，最多 {_MAX_BEATS} 拍，其中旁白最多 {_MAX_NARRATION_BEATS} 拍。旁白 {{"kind": "narration", "text": "≤{_NARRATION_CHARS}字"}}；台词 {{"kind": "line", "line_index": 整数}}；独白 {{"kind": "aside", "monologue_index": 整数}}。
+- beats：这一场的拍子，最多 {_MAX_BEATS} 拍，其中旁白最多 {_MAX_NARRATION_BEATS} 拍。旁白 {{"kind": "narration", "text": "≤{_NARRATION_CHARS}字"}}；台词 {{"kind": "line", "line_index": 整数}}；独白 {{"kind": "aside", "monologue_index": 整数, "text": "≤{_ASIDE_CHARS}字"}}。
 - memo：到此为止的前情提要，给下一场接续用（≤{_MEMO_CHARS}字）。
 {{"scenes": [{{"location_index": 1, "stage_direction": "≤{_STAGE_DIRECTION_CHARS}字", "beats": [...]}}], "memo": "≤{_MEMO_CHARS}字"}}
 """
 
 # Per scene: location_index ≈3 + stage_direction ≤60 chars ≈90 + 3 narration beats × (≤80 chars
-# ≈120 + structure 10) + 5 quoted beats × ≈12 + structure ≈30 ≈ 573; × 4 scenes ≈ 2292
-# + memo ≤100 chars ≈150 + wrapper ≈20 → ≈2462 tok.
-_MAX_TOKENS = output_budget(2462)
+# ≈120 + structure 10) + 5 more beats, at most asides × (index ≈5 + text ≤40 chars ≈60
+# + structure 12) + structure ≈30 ≈ 898; × 4 scenes ≈ 3592 + memo ≤100 chars ≈150 + wrapper ≈20
+# → ≈3762 tok.
+_MAX_TOKENS = output_budget(3762)
 
 
 @dataclass(frozen=True)
@@ -454,11 +458,14 @@ class StageNarrator:
                         beats.append({"kind": "line", "speaker_id": line["speaker_id"],
                                       "speaker": line["speaker"], "text": line["text"]})
                 elif kind == "aside":
+                    # The words are the narrator's distillation; whose thought it is comes from
+                    # the index. No words, no aside: the raw monologue is backstage talk.
                     picked = thought_ref.resolve([beat.get("monologue_index")])
-                    if picked and monologues[int(picked[0])]["location_id"] == location_id:
+                    text = str(beat.get("text") or "").strip()
+                    if text and picked and monologues[int(picked[0])]["location_id"] == location_id:
                         thought = monologues[int(picked[0])]
                         beats.append({"kind": "aside", "speaker_id": thought["speaker_id"],
-                                      "speaker": thought["speaker"], "text": thought["text"]})
+                                      "speaker": thought["speaker"], "text": text})
             direction = str(raw.get("stage_direction") or "").strip()
             if not beats and not direction:
                 continue

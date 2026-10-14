@@ -13,7 +13,7 @@ from core.container import Container
 from core.context import clear_log_context, set_log_context
 from core.logging import get_logger
 from core.interfaces.action import (
-    ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref, TradeTerms,
+    KIND_MONEY, ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref, TradeTerms,
 )
 from core.prompts import render_condition
 from engine.executors import build_default_registry
@@ -75,8 +75,14 @@ def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, A
         ],
         "entity_state_changes": [
             {"entity_id": c.entity_id, "new_state": c.new_state, "owner_id": c.owner_id,
-             "location_id": c.location_id, "perception": c.perception}
+             "location_id": c.location_id, "quantity": c.quantity, "perception": c.perception}
             for c in r.entity_state_changes
+        ],
+        # An exchange's moves (TRADE): ids are code-layer, names resolved for the judge.
+        "transfers": [
+            {"from": nm.get(t.from_id, t.from_id), "to": nm.get(t.to_id, t.to_id),
+             "entity_id": t.entity_id, "quantity": t.quantity}
+            for t in r.transfers
         ],
         # Made things: their name / description go into other agents' reachable lists and get embedded,
         # so for the same reason they must be included; otherwise they skip the judge and the id/step leak scan.
@@ -147,6 +153,10 @@ def _build_agent_action(
         else:
             # recipient: who receives a delivery (only meaningful on the entity channel); pairs with the scenario's holder.
             rcpt = spec.get("recipient")
+            if it == KIND_MONEY:
+                # target names whose purse it is.
+                purse = env.purse_of(resolve_ref(str(tgt or ""), id_by_name, valid_ids))
+                tgt = purse.entity_id if purse is not None else ""
             target = ActionTarget(
                 acts_on=[Ref.entity(str(tgt or ""), it)],
                 reaches=(
@@ -154,13 +164,20 @@ def _build_agent_action(
                 ),
             )
     intent = None
+    if atype == ActionType.PHYSICAL and spec.get("amount"):
+        intent = ActionIntent(purpose=spec.get("description", ""), amount=int(spec["amount"]))
     if atype == ActionType.TRADE and target.acts_on:
+        # give / ask name things the scene registered; money goes by amount.
+        def thing(name: object) -> str:
+            found = env.find_item(str(name)) if name else None
+            return found.entity_id if found is not None else ""
+
         intent = ActionIntent(
             purpose=spec.get("description", ""),
             trade=TradeTerms(
                 counterpart_id=target.acts_on[0].id,
-                give_entity_id=str(spec.get("give", "")), give_amount=int(spec.get("give_money", 0)),
-                ask_entity_id=str(spec.get("ask", "")), ask_amount=int(spec.get("ask_money", 0)),
+                give_entity_id=thing(spec.get("give")), give_amount=int(spec.get("give_money", 0)),
+                ask_entity_id=thing(spec.get("ask")), ask_amount=int(spec.get("ask_money", 0)),
             ),
         )
     if atype == ActionType.ERRAND:
@@ -403,7 +420,8 @@ async def run_action(
     id_by_name = {v: k for k, v in name_by_id.items()}
     registry = build_default_registry(
         traced_container.llm_router, world.directory,
-        seconds_per_step=world.clock_config.seconds_per_step, check_seed=world_id)
+        seconds_per_step=world.clock_config.seconds_per_step, check_seed=world_id,
+        economy=world.environment.economy)
     message_system = MessageSystem(traced_container.message_provider, world_id=world_id)
 
     await apply_action_scene(scenario or {}, world, run_step, id_by_name)

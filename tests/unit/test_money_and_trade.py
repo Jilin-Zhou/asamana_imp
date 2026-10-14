@@ -373,7 +373,7 @@ class _JudgeRouter:
         return LLMResponse(content=json.dumps(reply, ensure_ascii=False), input_tokens=0, output_tokens=0, model="stub")
 
 
-async def _snatch(container, amount_moved: object, *, asked: int | None, tier=None):  # noqa: ANN001, ANN202
+async def _snatch(container, amount_moved: object, *, asked: int | None, tier=None, victim_aware: bool = False):  # noqa: ANN001, ANN202
     from core.interfaces.check import CheckTier
     from engine.executors.physical import PhysicalExecutor
     from tests.unit.check_fixtures import fixed_check
@@ -382,6 +382,8 @@ async def _snatch(container, amount_moved: object, *, asked: int | None, tier=No
     env.add_money(30, holder_id="b")
     purse = env.purse_of("b").entity_id
     agents = {"a": _make_agent(container, world_id="w", agent_id="a", name="甲")}
+    if victim_aware:
+        agents["b"] = _make_agent(container, world_id="w", agent_id="b", name="乙")
     router = _JudgeRouter(amount_moved)
     executor = PhysicalExecutor(
         router, LiveWorldDirectory.from_agents(agents, env), check_assessor=fixed_check(tier or CheckTier.SUCCESS),
@@ -438,3 +440,10 @@ async def test_a_built_world_hands_each_character_his_cash(mock_build_container,
     assert sum(e.is_money for e in world.environment.all_live_entities()) == 2
     restored = await WorldInitializer(mock_build_container).restore(world.world_id)
     assert sorted(restored.environment.money_of(aid) for aid in world.agents) == [0, 500, 800]
+
+
+async def test_onlookers_see_money_change_hands_but_the_victim_knows_how_much(container) -> None:
+    result, router = await _snatch(container, 7, asked=10, victim_aware=True)
+    assert "甲拿起了一些银子" in result.entity_state_changes[0].perception
+    # The victim's reaction is told the sum he lost, not just the currency.
+    assert any("夺走7两银子" in prompt for prompt in router.prompts)
