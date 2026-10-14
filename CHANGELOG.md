@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Action checks: PHYSICAL, COVERT and WORK are settled by a 3d6 roll against an LLM-assessed difficulty and edge, with five graded results from critical success to critical failure. The executor's narration writes the rolled result instead of deciding success, and a covert act's exposure follows the roll when someone is present to notice.
+- The narrative feed shows each rolled result's tier, the dice and the assessor's reason.
+- `python -m tuning stats <world-id>`: action types, success rates and roll tiers counted from snapshots, without calling a model.
+
+### Fixed
+
+- The tuning action harness read a field `ActionResult` doesn't have when reporting observations.
+
 ## [0.1.0] - 2026-10-08
 
 First public release.
