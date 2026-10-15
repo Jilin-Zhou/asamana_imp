@@ -84,19 +84,21 @@ TICK_SECONDS = 3 * 3600
 _PERSISTENCE = 0.6
 
 _S = Sky
-# How often each sky holds over a season, per climate. Each row sums to 1.
+# The share of a season's hours under each sky, per climate; each row sums to 1. Hours, not
+# days: a day that sees rain is still dry most of the time, so rain sits well below a count of
+# rainy days. Don't raise it to that count, or the world spends half its hours in the rain.
 _SEASON_WEIGHTS: dict[Climate, dict[Season, dict[Sky, float]]] = {
     Climate.TEMPERATE_MONSOON: {
-        Season.SPRING: {_S.CLEAR: .45, _S.OVERCAST: .25, _S.RAIN: .15, _S.SNOW: .00, _S.WIND: .15},
-        Season.SUMMER: {_S.CLEAR: .40, _S.OVERCAST: .20, _S.RAIN: .35, _S.SNOW: .00, _S.WIND: .05},
-        Season.AUTUMN: {_S.CLEAR: .55, _S.OVERCAST: .20, _S.RAIN: .15, _S.SNOW: .00, _S.WIND: .10},
-        Season.WINTER: {_S.CLEAR: .45, _S.OVERCAST: .20, _S.RAIN: .00, _S.SNOW: .20, _S.WIND: .15},
+        Season.SPRING: {_S.CLEAR: .50, _S.OVERCAST: .28, _S.RAIN: .08, _S.SNOW: .00, _S.WIND: .14},
+        Season.SUMMER: {_S.CLEAR: .48, _S.OVERCAST: .28, _S.RAIN: .18, _S.SNOW: .00, _S.WIND: .06},
+        Season.AUTUMN: {_S.CLEAR: .60, _S.OVERCAST: .22, _S.RAIN: .08, _S.SNOW: .00, _S.WIND: .10},
+        Season.WINTER: {_S.CLEAR: .52, _S.OVERCAST: .25, _S.RAIN: .00, _S.SNOW: .08, _S.WIND: .15},
     },
     Climate.HUMID_SUBTROPICAL: {
-        Season.SPRING: {_S.CLEAR: .30, _S.OVERCAST: .30, _S.RAIN: .35, _S.SNOW: .00, _S.WIND: .05},
-        Season.SUMMER: {_S.CLEAR: .40, _S.OVERCAST: .20, _S.RAIN: .35, _S.SNOW: .00, _S.WIND: .05},
-        Season.AUTUMN: {_S.CLEAR: .50, _S.OVERCAST: .25, _S.RAIN: .20, _S.SNOW: .00, _S.WIND: .05},
-        Season.WINTER: {_S.CLEAR: .35, _S.OVERCAST: .35, _S.RAIN: .20, _S.SNOW: .05, _S.WIND: .05},
+        Season.SPRING: {_S.CLEAR: .35, _S.OVERCAST: .40, _S.RAIN: .20, _S.SNOW: .00, _S.WIND: .05},
+        Season.SUMMER: {_S.CLEAR: .48, _S.OVERCAST: .30, _S.RAIN: .17, _S.SNOW: .00, _S.WIND: .05},
+        Season.AUTUMN: {_S.CLEAR: .55, _S.OVERCAST: .30, _S.RAIN: .10, _S.SNOW: .00, _S.WIND: .05},
+        Season.WINTER: {_S.CLEAR: .40, _S.OVERCAST: .42, _S.RAIN: .12, _S.SNOW: .02, _S.WIND: .04},
     },
     Climate.ARID: {
         Season.SPRING: {_S.CLEAR: .60, _S.OVERCAST: .10, _S.RAIN: .02, _S.SNOW: .00, _S.WIND: .28},
@@ -105,16 +107,16 @@ _SEASON_WEIGHTS: dict[Climate, dict[Season, dict[Sky, float]]] = {
         Season.WINTER: {_S.CLEAR: .55, _S.OVERCAST: .15, _S.RAIN: .02, _S.SNOW: .08, _S.WIND: .20},
     },
     Climate.COLD: {
-        Season.SPRING: {_S.CLEAR: .35, _S.OVERCAST: .30, _S.RAIN: .10, _S.SNOW: .15, _S.WIND: .10},
-        Season.SUMMER: {_S.CLEAR: .45, _S.OVERCAST: .25, _S.RAIN: .20, _S.SNOW: .00, _S.WIND: .10},
-        Season.AUTUMN: {_S.CLEAR: .35, _S.OVERCAST: .30, _S.RAIN: .10, _S.SNOW: .15, _S.WIND: .10},
-        Season.WINTER: {_S.CLEAR: .30, _S.OVERCAST: .25, _S.RAIN: .00, _S.SNOW: .30, _S.WIND: .15},
+        Season.SPRING: {_S.CLEAR: .40, _S.OVERCAST: .35, _S.RAIN: .07, _S.SNOW: .08, _S.WIND: .10},
+        Season.SUMMER: {_S.CLEAR: .50, _S.OVERCAST: .28, _S.RAIN: .12, _S.SNOW: .00, _S.WIND: .10},
+        Season.AUTUMN: {_S.CLEAR: .40, _S.OVERCAST: .35, _S.RAIN: .07, _S.SNOW: .08, _S.WIND: .10},
+        Season.WINTER: {_S.CLEAR: .38, _S.OVERCAST: .30, _S.RAIN: .00, _S.SNOW: .17, _S.WIND: .15},
     },
     Climate.TROPICAL: {
-        Season.SPRING: {_S.CLEAR: .45, _S.OVERCAST: .20, _S.RAIN: .30, _S.SNOW: .00, _S.WIND: .05},
-        Season.SUMMER: {_S.CLEAR: .30, _S.OVERCAST: .20, _S.RAIN: .45, _S.SNOW: .00, _S.WIND: .05},
-        Season.AUTUMN: {_S.CLEAR: .35, _S.OVERCAST: .20, _S.RAIN: .40, _S.SNOW: .00, _S.WIND: .05},
-        Season.WINTER: {_S.CLEAR: .55, _S.OVERCAST: .20, _S.RAIN: .20, _S.SNOW: .00, _S.WIND: .05},
+        Season.SPRING: {_S.CLEAR: .52, _S.OVERCAST: .25, _S.RAIN: .18, _S.SNOW: .00, _S.WIND: .05},
+        Season.SUMMER: {_S.CLEAR: .40, _S.OVERCAST: .30, _S.RAIN: .25, _S.SNOW: .00, _S.WIND: .05},
+        Season.AUTUMN: {_S.CLEAR: .45, _S.OVERCAST: .28, _S.RAIN: .22, _S.SNOW: .00, _S.WIND: .05},
+        Season.WINTER: {_S.CLEAR: .62, _S.OVERCAST: .25, _S.RAIN: .08, _S.SNOW: .00, _S.WIND: .05},
     },
 }
 

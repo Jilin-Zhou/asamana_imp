@@ -25,9 +25,10 @@ MAX_CARDS = 20
 WEIGHT_MIN = 1
 WEIGHT_MAX = 3
 
-# Chance a check draws at all when some card's conditions hold. Not every check: the editor's
-# own judgment still decides the other half.
-DRAW_CHANCE = 0.5
+# Chance a check draws at all when some card's conditions hold. The deck carries most of the
+# cadence: the editor's own gate seldom injects while the cast is busy pushing its threads, so
+# the checks it is left with mostly pass quietly. Not every check: a quiet stretch is pacing too.
+DRAW_CHANCE = 0.75
 
 
 class Scope(str, Enum):
