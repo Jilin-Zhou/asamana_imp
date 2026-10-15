@@ -63,7 +63,7 @@ _SYSTEM_PROMPT = f"""\
 - 专长名称是一门本事的名字，不是性格或身份（「镇定」「掌柜」都不是专长）。
 - 带多少钱按身份、家境与此刻的处境比出多寡，参照下面给的物价：穷人可以分文没有，富人也不会把家底都揣在身上。
   这个世界没有钱时一律填 0。
-- 物件只记在人设、秘密或物件描述写明归他所有、在他身上的那个人名下：揣在怀里的信、随身佩的刀、自己挑着的货担。
+- 物件记在它此刻的主人名下：人设、开场处境、秘密或物件描述表明归这个人所有、由他带着的（揣在怀里的信、随身佩的刀、自己挑着的货担）。
   摆在某处、藏在某处、归店铺或官府的，不记在任何人名下；不要为了让人有东西可用而分派。一件物件至多记在一人名下。
 
 【输出】
@@ -75,7 +75,7 @@ _SYSTEM_PROMPT = f"""\
   - attributes：五项属性的等级；
   - skills：至多 {MAX_SKILLS} 项，name ≤{_SKILL_NAME_MAX_CHARS}字，level {SKILL_MIN}–{SKILL_MAX}；
   - cash：随身带着的钱，按下面给的单位计的整数；
-  - carries：在他身上的物件，填下面「物件」清单里的编号（与人物编号各数各的），没有就给空数组。
+  - carries：在他身上的物件，是下面「物件」清单里的编号组成的整数数组（与人物编号各数各的，如 [2, 5]），没有就给空数组。
 格式示意（数值不代表任何人）：
 {{"reason": "≤{_REASON_MAX_CHARS}字", "cast": [{{"index": 1, "basis": "≤{_BASIS_MAX_CHARS}字", "attributes": {{{_SCHEMA_ATTRIBUTES}}}, "skills": [{{"name": "≤{_SKILL_NAME_MAX_CHARS}字", "level": 1}}], "cash": 0, "carries": []}}]}}
 """
@@ -166,6 +166,9 @@ class AbilityDesigner:
                 parts.append(f"外貌：{soul.appearance}")
             if soul.secret:
                 parts.append(f"秘密：{soul.secret}")
+            # The analysis' step-0 sketch: what he is doing as the story opens, and so what he has on him.
+            if brief := str(d.metadata.get("brief") or ""):
+                parts.append(f"开场处境：{brief}")
             people.append(f"#{i} " + "｜".join(parts))
         roster = "\n".join(people)
         economy = analysis.economy

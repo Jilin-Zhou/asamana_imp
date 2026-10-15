@@ -259,14 +259,17 @@ async def test_the_designer_puts_a_characters_own_things_in_his_hands() -> None:
     qin, wall = _seed("古琴"), _seed("夹墙", "landmark")
     router = _SeqRouter(_cast_reply(
         {"index": 1, "attributes": {}, "skills": [], "carries": [1]},
-        {"index": 2, "attributes": {}, "skills": [], "carries": []},
+        {"index": 2, "attributes": {}, "skills": [], "carries": [{"name": "古琴"}]},
     ))
-    rated = await AbilityDesigner(router).design(
-        _analysis(seeds=(qin, wall)), [_definition("a1", "甲"), _definition("a2", "乙")],
-    )
+    owner = _definition("a1", "甲")
+    owner.metadata["brief"] = "抱着古琴来西市寻买主"
+    rated = await AbilityDesigner(router).design(_analysis(seeds=(qin, wall)), [owner, _definition("a2", "乙")])
+    # Only indices bind: a thing named instead of numbered binds nothing.
     assert [d.carried for d in rated] == [(qin.entity_id,), ()]
     prompt = router.calls[0][1].content
     assert "#1 古琴：古琴的样子（在西市）" in prompt
+    # The opening sketch is how the designer knows what someone has on him.
+    assert "开场处境：抱着古琴来西市寻买主" in prompt
     # A landmark never changes hands, so it is never offered.
     assert "夹墙" not in prompt
 
