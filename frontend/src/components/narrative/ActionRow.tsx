@@ -258,12 +258,19 @@ export default function ActionRow({
                 🎲 {tierLabel(act.check!)}
               </span>
             )}
-            {/* A failed tier already says it. A good roll can still come to nothing: a covert
-                watch in a room where nothing happened. */}
+            {/* A failed tier already says it. A good roll can still come to nothing (a covert
+                watch in a room where nothing happened): that is no defeat, so it reads as
+                「无所获」 in gray, never the rose 「未果」 beside a 「大成功」. */}
             {act.succeeded === false && !isInterrupt && !rolledFailure && (
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-rose-300 bg-rose-950/50 border border-rose-900/60">
-                未果
-              </span>
+              tierShown ? (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-slate-400 bg-slate-800/50 border border-slate-700/50">
+                  无所获
+                </span>
+              ) : (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md text-rose-300 bg-rose-950/50 border border-rose-900/60">
+                  未果
+                </span>
+              )
             )}
           </>
         )}
