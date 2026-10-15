@@ -36,7 +36,9 @@ from core.interfaces.world_config import WorldConfig
 from worlds.tiled import CAST_ART_FIELDS, CHARACTERS_FILENAME
 
 from core.coerce import coerce_int
-from world.models import AgentDefinition, AgentTier, HistoricalEventSeed, ThemeAnalysis, World, WorldEntity, WorldEntityType
+from world.models import (
+    AgentDefinition, AgentTier, EntityPresence, HistoricalEventSeed, ThemeAnalysis, World, WorldEntity, WorldEntityType,
+)
 from world.stored_config import StoredWorldConfig, serialize_world_config
 
 logger = get_logger(__name__)
@@ -78,7 +80,7 @@ class WorldInitializer:
             month=WorldTime.from_step(0, clock_config).month_of_year,
         )
         environment = EnvironmentSystem(world_config, max_npcs=self._max_npcs, economy=analysis.economy)
-        await self._instantiate_entity_seeds(analysis, environment, world_config)
+        await self._instantiate_entity_seeds(analysis, environment, world_config, agent_definitions)
         self._instantiate_npc_seeds(analysis, environment, world_config)
         agents: dict[str, Agent] = {}
 
@@ -487,7 +489,7 @@ class WorldInitializer:
         environment = EnvironmentSystem(
             active_world_config, max_npcs=self._max_npcs, economy=analysis.economy,
         )
-        await self._instantiate_entity_seeds(analysis, environment, active_world_config)
+        await self._instantiate_entity_seeds(analysis, environment, active_world_config, agent_definitions)
         # Npcs aren't rebuilt here, deliberately unlike entity seeds: the npc_states payload is
         # self-contained (identity + position + condition + current errand) and _restore_environment_state
         # loads it in one go. Building them on both paths would collide on ids, and since ids are slugs of
@@ -831,29 +833,44 @@ class WorldInitializer:
             environment.spawn_npc(seed, location_id=location_id)
 
     async def _instantiate_entity_seeds(
-        self, analysis: ThemeAnalysis, environment: EnvironmentSystem, world_config: WorldConfig
+        self,
+        analysis: ThemeAnalysis,
+        environment: EnvironmentSystem,
+        world_config: WorldConfig,
+        agent_definitions: Sequence[AgentDefinition],
     ) -> None:
+        """Seeds a character carries start in his hands; the rest lie where the analysis put them.
+
+        A restored world rebuilds the step-0 layout here and then loads where each thing is now
+        from its snapshot.
+        """
         location_ids = sorted(world_config.get_places())
         default_location = location_ids[0] if location_ids else None
+        holders = {seed_id: d.agent_id for d in agent_definitions for seed_id in d.carried}
 
         for seed in analysis.world_entity_seeds:
-            location_id = world_config.resolve_location_id(seed.location_name)
-            if location_id is None:
-                location_id = default_location
-                logger.warning(
-                    "entity_seed_location_unresolvable",
-                    extra={
-                        "seed_name": seed.name,
-                        "requested": seed.location_name,
-                        "fallback": location_id,
-                    },
-                )
-            if location_id is None:
-                logger.warning(
-                    "entity_seed_skipped_no_location",
-                    extra={"seed_name": seed.name},
-                )
-                continue
+            holder_id = holders.get(seed.entity_id) if seed.is_takeable else None
+            if holder_id is not None:
+                presence, presence_ref = EntityPresence.HELD, holder_id
+            else:
+                location_id = world_config.resolve_location_id(seed.location_name)
+                if location_id is None:
+                    location_id = default_location
+                    logger.warning(
+                        "entity_seed_location_unresolvable",
+                        extra={
+                            "seed_name": seed.name,
+                            "requested": seed.location_name,
+                            "fallback": location_id,
+                        },
+                    )
+                if location_id is None:
+                    logger.warning(
+                        "entity_seed_skipped_no_location",
+                        extra={"seed_name": seed.name},
+                    )
+                    continue
+                presence, presence_ref = EntityPresence.AT_LOCATION, location_id
             entity_id = seed.entity_id
             entity = WorldEntity(
                 entity_id=entity_id,
@@ -861,7 +878,8 @@ class WorldInitializer:
                 entity_type=WorldEntityType(seed.entity_type),
                 state=seed.initial_state,
                 description=seed.description,
-                presence_ref=location_id,   # presence defaults to AT_LOCATION
+                presence=presence,
+                presence_ref=presence_ref,
                 is_takeable=seed.is_takeable,
                 is_public=True,
                 content=seed.content,
@@ -873,7 +891,8 @@ class WorldInitializer:
                     "entity_id": entity_id,
                     "seed_name": seed.name,
                     "entity_type": seed.entity_type,
-                    "location_id": location_id,
+                    "presence": presence.value,
+                    "presence_ref": presence_ref,
                 },
             )
 

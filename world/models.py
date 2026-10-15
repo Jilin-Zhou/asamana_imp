@@ -659,6 +659,8 @@ class AgentDefinition:
     metadata: dict[str, Any] = field(default_factory=dict)
     # The money he carries at step 0, in the world's unit; a pile in his hands from then on.
     initial_cash: int = 0
+    # Ids of the world entity seeds in his hands at step 0 (``WorldEntitySeed.entity_id``).
+    carried: tuple[str, ...] = ()
 
     @property
     def is_main_character(self) -> bool:
@@ -712,6 +714,7 @@ class AgentDefinition:
             "historical_memories": [event.as_dict() for event in self.historical_memories],
             "metadata": dict(self.metadata),
             "initial_cash": self.initial_cash,
+            "carried": list(self.carried),
         }
 
     @classmethod
@@ -787,6 +790,7 @@ class AgentDefinition:
             ],
             metadata=dict(data.get("metadata") or {}),
             initial_cash=max(0, int(data.get("initial_cash") or 0)),
+            carried=tuple(str(c) for c in data.get("carried") or ()),
         )
 
 

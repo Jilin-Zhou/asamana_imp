@@ -19,7 +19,7 @@ from core.interfaces.economy import Economy, PriceReference
 from core.interfaces.llm import LLMResponse
 from engine.check import CheckAssessor
 from world.builders.ability_designer import AbilityDesigner
-from world.models import AgentDefinition, AgentTier
+from world.models import AgentDefinition, AgentTier, EntityPresence, WorldEntitySeed
 
 _NIMBLE = Abilities(
     attributes={Attribute.AGILITY: 4, Attribute.PHYSIQUE: 2},
@@ -179,8 +179,10 @@ def _definition(agent_id: str, name: str) -> AgentDefinition:
     )
 
 
-def _analysis(economy: Economy | None = None) -> SimpleNamespace:
-    return SimpleNamespace(world_name="镖局", era_description="乱世", economy=economy or Economy())
+def _analysis(economy: Economy | None = None, seeds: tuple[WorldEntitySeed, ...] = ()) -> SimpleNamespace:
+    return SimpleNamespace(
+        world_name="镖局", era_description="乱世", economy=economy or Economy(), world_entity_seeds=list(seeds),
+    )
 
 
 class _SeqRouter:
@@ -245,6 +247,61 @@ async def test_the_designer_prompt_names_people_not_ids() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The build puts each character's own things in his hands
+# ---------------------------------------------------------------------------
+
+
+def _seed(name: str, entity_type: str = "item") -> WorldEntitySeed:
+    return WorldEntitySeed(name=name, entity_type=entity_type, description=f"{name}的样子", location_name="西市")
+
+
+async def test_the_designer_puts_a_characters_own_things_in_his_hands() -> None:
+    qin, wall = _seed("古琴"), _seed("夹墙", "landmark")
+    router = _SeqRouter(_cast_reply(
+        {"index": 1, "attributes": {}, "skills": [], "carries": [1]},
+        {"index": 2, "attributes": {}, "skills": [], "carries": []},
+    ))
+    rated = await AbilityDesigner(router).design(
+        _analysis(seeds=(qin, wall)), [_definition("a1", "甲"), _definition("a2", "乙")],
+    )
+    assert [d.carried for d in rated] == [(qin.entity_id,), ()]
+    prompt = router.calls[0][1].content
+    assert "#1 古琴：古琴的样子（在西市）" in prompt
+    # A landmark never changes hands, so it is never offered.
+    assert "夹墙" not in prompt
+
+
+async def test_a_thing_claimed_twice_stays_with_the_first_in_cast_order() -> None:
+    qin = _seed("古琴")
+    rated = await AbilityDesigner(_SeqRouter(_cast_reply(
+        {"index": 2, "attributes": {}, "skills": [], "carries": [1, 7, "x"]},
+        {"index": 1, "attributes": {}, "skills": [], "carries": [1]},
+    ))).design(_analysis(seeds=(qin,)), [_definition("a1", "甲"), _definition("a2", "乙")])
+    assert [d.carried for d in rated] == [(qin.entity_id,), ()]
+
+
+async def test_a_world_without_things_to_carry_says_so() -> None:
+    router = _SeqRouter(_cast_reply({"index": 1, "attributes": {}, "skills": []}))
+    rated = await AbilityDesigner(router).design(_analysis(), [_definition("a1", "甲")])
+    assert rated[0].carried == ()
+    assert "没有可随身的物件" in router.calls[0][1].content
+
+
+async def test_a_built_world_starts_each_thing_in_its_owners_hands(mock_build_container, test_config) -> None:
+    from engine.application import NarrativeApplication
+    from world.initializer import WorldInitializer
+
+    app = NarrativeApplication(mock_build_container, test_config)
+    world = await app.build_world("玄武门之变", template="changan_iso")
+    seal = WorldEntitySeed(name="传国玉玺", entity_type="item").entity_id
+    # The stub gives the first character the seal; the landmark stays where it stands.
+    held = world.environment.get_entity(seal)
+    assert held.presence is EntityPresence.HELD and held.presence_ref in world.agents
+    restored = await WorldInitializer(mock_build_container).restore(world.world_id)
+    assert restored.environment.get_entity(seal).presence_ref == held.presence_ref
+
+
+# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 
@@ -253,6 +310,12 @@ def test_a_definition_keeps_its_abilities_through_a_round_trip() -> None:
     definition = _definition("a1", "甲")
     definition.soul = SoulLayer(name="甲", agent_id="a1", abilities=_NIMBLE)
     assert AgentDefinition.from_dict(definition.as_dict()).soul.abilities == _NIMBLE
+
+
+def test_a_definition_keeps_what_it_carries_through_a_round_trip() -> None:
+    definition = _definition("a1", "甲")
+    definition.carried = ("seed_qin",)
+    assert AgentDefinition.from_dict(definition.as_dict()).carried == ("seed_qin",)
 
 
 def test_a_world_saved_without_abilities_loads_as_ordinary_people() -> None:

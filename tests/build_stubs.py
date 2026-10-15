@@ -14,6 +14,7 @@ MOCK_ABILITY_DESIGN_RESPONSE = json.dumps({
             "attributes": {"体魄": 4, "身手": 4, "心智": 3, "口才": 2, "胆识": 5},
             "skills": [{"name": "骑射", "level": 3}, {"name": "兵法", "level": 2}],
             "cash": 500,
+            "carries": [1],
         },
         {
             "index": 2, "basis": "善于结纳，不长武艺",

@@ -1,4 +1,5 @@
-"""Ability design: the LLM call that rates the whole cast's attributes, skills and cash on one scale."""
+"""Ability design: the LLM call that rates the whole cast's attributes, skills, cash and starting
+belongings on one scale."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from core.interfaces.llm import IndexedRef, LLMMessage, LLMRouter, LLMScene, ext
 from core.logging import get_logger
 
 from world.builders import BUILD_ATTEMPTS
-from world.models import AgentDefinition, ThemeAnalysis
+from world.models import AgentDefinition, ThemeAnalysis, WorldEntitySeed
 
 logger = get_logger(__name__)
 
@@ -25,9 +26,9 @@ _SKILL_NAME_MAX_CHARS = 6
 
 # reason ≤120 chars ≈ 180 tok. Per character: index ≈3 + basis ≤30 chars ≈45 + attributes
 # (5 × ~6 + braces) ≈ 40 + skills (≤4 × (name ≤6 chars ≈9 + level 3 + structure 10)) ≈ 88
-# + cash ≈3 + structure 25 ≈ 204 tok.
+# + cash ≈3 + carries (≤3 indices ≈9 + key 6) ≈15 + structure 25 ≈ 219 tok.
 _REASON_TOKENS = 180
-_PER_CHARACTER_TOKENS = 204
+_PER_CHARACTER_TOKENS = 219
 
 _LEVEL_LEGEND = " / ".join(
     f"{level} {attribute_word(level)}" for level in range(ATTRIBUTE_MIN, ATTRIBUTE_MAX + 1)
@@ -41,7 +42,7 @@ _SYSTEM_PROMPT = f"""\
 
 【任务】
 下面给出全体人物的人设。先在 reason 里把全体人物放在一起比较，再为每个人评定五项属性、至多 {MAX_SKILLS} 项专长，
-以及他此刻随身带着多少钱。所有人用同一把尺子量：谁力气最大、谁最有心计、谁最会说话、谁最有钱，要能横向比出来。
+他此刻随身带着多少钱，以及下面所给的物件里哪些就在他身上。所有人用同一把尺子量：谁力气最大、谁最有心计、谁最会说话、谁最有钱，要能横向比出来。
 
 【属性】每项 {ATTRIBUTE_MIN}–{ATTRIBUTE_MAX} 级：{_LEVEL_LEGEND}
 {_ATTRIBUTE_LEGEND}
@@ -62,6 +63,8 @@ _SYSTEM_PROMPT = f"""\
 - 专长名称是一门本事的名字，不是性格或身份（「镇定」「掌柜」都不是专长）。
 - 带多少钱按身份、家境与此刻的处境比出多寡，参照下面给的物价：穷人可以分文没有，富人也不会把家底都揣在身上。
   这个世界没有钱时一律填 0。
+- 物件只记在人设、秘密或物件描述写明归他所有、在他身上的那个人名下：揣在怀里的信、随身佩的刀、自己挑着的货担。
+  摆在某处、藏在某处、归店铺或官府的，不记在任何人名下；不要为了让人有东西可用而分派。一件物件至多记在一人名下。
 
 【输出】
 只返回符合下面格式的紧凑 JSON：
@@ -71,12 +74,20 @@ _SYSTEM_PROMPT = f"""\
   - basis：此人擅长什么、短在哪（≤{_BASIS_MAX_CHARS}字）；
   - attributes：五项属性的等级；
   - skills：至多 {MAX_SKILLS} 项，name ≤{_SKILL_NAME_MAX_CHARS}字，level {SKILL_MIN}–{SKILL_MAX}；
-  - cash：随身带着的钱，按下面给的单位计的整数。
+  - cash：随身带着的钱，按下面给的单位计的整数；
+  - carries：在他身上的物件，填下面「物件」清单里的编号（与人物编号各数各的），没有就给空数组。
 格式示意（数值不代表任何人）：
-{{"reason": "≤{_REASON_MAX_CHARS}字", "cast": [{{"index": 1, "basis": "≤{_BASIS_MAX_CHARS}字", "attributes": {{{_SCHEMA_ATTRIBUTES}}}, "skills": [{{"name": "≤{_SKILL_NAME_MAX_CHARS}字", "level": 1}}], "cash": 0}}]}}
+{{"reason": "≤{_REASON_MAX_CHARS}字", "cast": [{{"index": 1, "basis": "≤{_BASIS_MAX_CHARS}字", "attributes": {{{_SCHEMA_ATTRIBUTES}}}, "skills": [{{"name": "≤{_SKILL_NAME_MAX_CHARS}字", "level": 1}}], "cash": 0, "carries": []}}]}}
 """
 
 _BY_LABEL: dict[str, Attribute] = {a.label: a for a in Attribute}
+
+
+@dataclasses.dataclass(frozen=True)
+class _Rating:
+    abilities: Abilities
+    cash: int
+    carried: tuple[str, ...]
 
 
 class AbilityDesigner:
@@ -92,12 +103,15 @@ class AbilityDesigner:
     async def design(
         self, analysis: ThemeAnalysis, definitions: Sequence[AgentDefinition],
     ) -> list[AgentDefinition]:
-        """Return the definitions with ``soul.abilities`` filled in, in the same order."""
+        """Return the definitions with ``soul.abilities``, ``initial_cash`` and ``carried`` filled
+        in, in the same order."""
         if not definitions:
             return list(definitions)
+        # Only what can change hands can start in someone's hands.
+        belongings = [seed for seed in analysis.world_entity_seeds if seed.is_takeable]
         messages = [
             LLMMessage(role="system", content=_SYSTEM_PROMPT),
-            LLMMessage(role="user", content=self._user_prompt(analysis, definitions)),
+            LLMMessage(role="user", content=self._user_prompt(analysis, definitions, belongings)),
         ]
         last_exc: BaseException | None = None
         for attempt in range(BUILD_ATTEMPTS):
@@ -107,13 +121,14 @@ class AbilityDesigner:
                     max_tokens=output_budget(_REASON_TOKENS + _PER_CHARACTER_TOKENS * len(definitions)),
                     json_mode=True,
                 )
-                rated = self._parse(response.content, definitions)
+                rated = self._parse(response.content, definitions, belongings)
                 if rated is not None:
                     return [
                         dataclasses.replace(
                             d,
-                            soul=dataclasses.replace(d.soul, abilities=rated[d.agent_id][0]),
-                            initial_cash=rated[d.agent_id][1] if analysis.economy.has_money else 0,
+                            soul=dataclasses.replace(d.soul, abilities=rated[d.agent_id].abilities),
+                            initial_cash=rated[d.agent_id].cash if analysis.economy.has_money else 0,
+                            carried=rated[d.agent_id].carried,
                         )
                         for d in definitions
                     ]
@@ -134,7 +149,9 @@ class AbilityDesigner:
         ) from last_exc
 
     @staticmethod
-    def _user_prompt(analysis: ThemeAnalysis, definitions: Sequence[AgentDefinition]) -> str:
+    def _user_prompt(
+        analysis: ThemeAnalysis, definitions: Sequence[AgentDefinition], belongings: Sequence[WorldEntitySeed],
+    ) -> str:
         people = []
         for i, d in enumerate(definitions, 1):
             soul = d.soul
@@ -157,6 +174,10 @@ class AbilityDesigner:
             + (f"；参考物价：{economy.price_reference()}" if economy.prices else "")
             if economy.has_money else "这个世界没有钱"
         )
+        things = "\n".join(
+            f"#{i} {seed.name}：{seed.description}" + (f"（在{seed.location_name}）" if seed.location_name else "")
+            for i, seed in enumerate(belongings, 1)
+        ) or "（没有可随身的物件，carries 一律给空数组）"
         return f"""\
 【输入】
 - 世界：{analysis.world_name}
@@ -164,18 +185,26 @@ class AbilityDesigner:
 - 钱：{money}
 - 人物：
 {roster}
+- 物件：
+{things}
 
 依上面说定的 JSON 格式输出（reason 在前），覆盖全部 {len(definitions)} 个人物，不写多余内容。"""
 
     @staticmethod
-    def _parse(raw: str, definitions: Sequence[AgentDefinition]) -> dict[str, tuple[Abilities, int]] | None:
-        """agent_id → (abilities, cash), or ``None`` when anyone is left unrated (the caller
-        retries)."""
+    def _parse(
+        raw: str, definitions: Sequence[AgentDefinition], belongings: Sequence[WorldEntitySeed],
+    ) -> dict[str, _Rating] | None:
+        """agent_id → rating, or ``None`` when anyone is left unrated (the caller retries).
+
+        A thing claimed by two people stays with the first in cast order: it can only be in one
+        pair of hands, and a duplicate claim isn't worth a retry.
+        """
         payload = extract_json_object(raw)
         if payload is None:
             return None
         ids = IndexedRef([d.agent_id for d in definitions])
-        rated: dict[str, tuple[Abilities, int]] = {}
+        things = IndexedRef([seed.entity_id for seed in belongings])
+        rated: dict[str, _Rating] = {}
         for entry in coerce_mapping_list(payload.get("cast")):
             resolved = ids.resolve([entry.get("index")])
             if not resolved:
@@ -192,8 +221,19 @@ class AbilityDesigner:
                     for s in coerce_mapping_list(entry.get("skills"))
                 ],
             })
-            rated[resolved[0]] = (abilities, coerce_int(entry.get("cash"), default=0, minimum=0))
+            carries = entry.get("carries")
+            rated[resolved[0]] = _Rating(
+                abilities=abilities,
+                cash=coerce_int(entry.get("cash"), default=0, minimum=0),
+                carried=tuple(things.resolve(carries if isinstance(carries, list) else [])),
+            )
         if len(rated) < len(definitions):
             return None
+        taken: set[str] = set()
+        for d in definitions:
+            rating = rated[d.agent_id]
+            mine = tuple(t for t in rating.carried if t not in taken)
+            taken.update(mine)
+            rated[d.agent_id] = dataclasses.replace(rating, carried=mine)
         return rated
 
