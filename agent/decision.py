@@ -347,16 +347,19 @@ def _bind_physical(slots: _Slots) -> "_Bound | None":
     list turns "pin someone down" into "grab something" while the description still names a person.
 
     The recipient is a modifier on the entity channel, not a fourth channel; unresolved, it rejects
-    the step, since the recipient is the substance of a hand-over. A PHYSICAL with no target is a
+    the step, since the recipient is the substance of a hand-over. With a thing and a recipient both
+    named, the entity channel wins over a filled person slot: models put the recipient there too,
+    and reading that as "act on him" leaves him nothing to receive. A PHYSICAL with no target is a
     broken decision, not a weaker act.
     """
     acted_on: "Ref | None" = None
     recipient_id: str | None = None
-    if slots.filled("physical_person_index"):
+    handover = slots.filled("physical_entity_index") and slots.filled("physical_recipient_index")
+    if slots.filled("physical_person_index") and not handover:
         person_id = slots.one("physical_person_index", slots.roster_ids)
         if person_id is not None and person_id in slots.visible_ids:   # a person must be present
             acted_on = Ref.agent(person_id)
-    elif slots.filled("physical_npc_index"):
+    elif slots.filled("physical_npc_index") and not handover:
         npc_id = slots.one("physical_npc_index", slots.npc_ids)
         if npc_id is not None:
             acted_on = Ref.npc(npc_id)
