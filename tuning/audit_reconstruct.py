@@ -4,7 +4,7 @@ Auditing is post-hoc and offline: it only reads the ``LLMCallTrace`` records alr
 ``data/traces/<world_id>/`` (prompt + response + stage + agent_id + step) and never reruns the
 simulation. This module regroups the flat JSONL calls into the shapes the three-part audit needs:
 
-- ``init``          — the build stage's world_building / cast_design / persona outputs (part one).
+- ``init``          — the build stage's world_building / cast_design / persona / ability outputs (part one).
 - ``per_agent``     — each agent's per-stage trajectory across all steps (part two: across / along).
 - ``per_step``      — each agent's stage outputs within a step (part three: one step across agents).
 - ``world_sequence``— the world skeleton across steps (time + injected events); each agent's cell goes through ``cells_at``.
@@ -401,6 +401,9 @@ def _fold_action(s: dict[str, Any], c: StageCall, out: dict, agent_name: str) ->
         _append(s, "acted_upon", au)
     fields = {k: out.get(k) for k in
               ("outcome", "fact", "dialogue", "success", "achieved", "detected") if k in out}
+    # A checked action's result is decided by the roll, not by anything in the judge's output.
+    if tier := c.extra.get("check_tier"):
+        fields["check_tier"] = tier
     if fields:
         whose = {k: v for k, v in (("did", c.extra.get("action_description")),
                                    ("initiator", c.extra.get("action_initiator")),
@@ -412,6 +415,7 @@ def _build_init(build_calls: list[LLMCallTrace]) -> tuple[dict[str, Any], dict[s
     """Assemble the initialization view + an agent_id→name map from build.jsonl calls."""
     world_building: dict[str, Any] = {}
     cast_roles: Any = None
+    abilities: Any = None
     personas: list[dict[str, Any]] = []
     names: dict[str, str] = {}
     for c in build_calls:
@@ -422,6 +426,8 @@ def _build_init(build_calls: list[LLMCallTrace]) -> tuple[dict[str, Any], dict[s
             world_building = obj
         elif c.scene == "cast_design":
             cast_roles = obj.get("roles")
+        elif c.scene == "ability_design":
+            abilities = obj.get("cast")
         elif c.scene == "persona_generation":
             # Identity comes from the trace's own agent_id / agent_name, not the echo: the model miscopies ids,
             # and production (AgentGenerator._definition_from_payload) doesn't trust the echoed name / agent_id either.
@@ -446,7 +452,11 @@ def _build_init(build_calls: list[LLMCallTrace]) -> tuple[dict[str, Any], dict[s
     roster = IndexedRef(
         str(f.get("name")) for f in world_building.get("key_figures") or [] if isinstance(f, dict)
     )
-    for role in cast_roles if isinstance(cast_roles, list) else []:
+    # Ability ratings use the same numbers: AbilityDesigner lists the cast in key_figures order.
+    for role in [
+        *(cast_roles if isinstance(cast_roles, list) else []),
+        *(abilities if isinstance(abilities, list) else []),
+    ]:
         if isinstance(role, dict) and (resolved := roster.resolve([role.get("index")])):
             role["name"] = resolved[0]
     init = {
@@ -464,6 +474,7 @@ def _build_init(build_calls: list[LLMCallTrace]) -> tuple[dict[str, Any], dict[s
         "world_time_config": world_building.get("world_time_config") or {},
         "seconds_per_step": seconds_per_step,
         "cast_roles": cast_roles or [],
+        "abilities": abilities or [],
         "personas": personas,
     }
     return init, names

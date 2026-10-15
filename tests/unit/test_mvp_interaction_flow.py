@@ -10,7 +10,7 @@ from interaction.replayer import Replayer
 from interaction.world_manager import WorldManager
 from world import WorldBuilder
 from world.initializer import WorldInitializer
-from world.models import WorldEntity, WorldEntityType
+from world.models import WorldEntity, WorldEntitySeed, WorldEntityType
 from worlds.tiled import TiledWorldConfig
 
 
@@ -174,7 +174,13 @@ async def test_restore_recovers_live_environment_entity_state(container, test_co
     assert edict.state == "unsealed"
     assert edict.owner_id == holder_id
     assert edict.location_id is None
-    assert [e.entity_id for e in restored.environment.get_items_of(holder_id)] == ["seed_edict"]
+    # Beside the edict he still holds the seal the build put in his hands.
+    seal = WorldEntitySeed(name="传国玉玺", entity_type="item").entity_id
+    assert sorted(
+        e.entity_id for e in restored.environment.get_items_of(holder_id) if not e.is_money
+    ) == sorted([seal, "seed_edict"])
+    # The cash he was built with comes back too: piles have no seed, only the snapshot.
+    assert restored.environment.money_of(holder_id) == environment.money_of(holder_id) > 0
 
 
 @pytest.mark.asyncio

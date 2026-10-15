@@ -15,6 +15,9 @@ import pytest
 
 from agent.personality import PersonalityLayer, SoulLayer
 from core.interfaces.condition import BodyCondition
+from tests.unit.check_fixtures import fixed_check
+from core.interfaces.check import CheckTier
+from engine.check import CheckVerdict
 
 BOUND = BodyCondition(description="双手被反绑", source_agent_id="a1", since_step=0)
 MARK = "双手被反绑"
@@ -85,9 +88,9 @@ async def test_covert_judge_knows_the_sneaker_is_bound() -> None:
     from engine.executors.covert import CovertExecutor
 
     llm = _Capture('{"reason":"x","achieved":false,"detected":true,"outcome":"o","fact":"f"}')
-    ex = CovertExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = CovertExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     await ex._judge(  # noqa: SLF001
-        _agent(), purpose="潜到廊下偷听", duration_label="约1小时",
+        _agent(), check=CheckVerdict(tier=CheckTier.SUCCESS), watched=False, purpose="潜到廊下偷听", duration_label="约1小时",
         expected_outcome="", scene="", now_step=24,
     )
     assert MARK in llm.text()
@@ -104,9 +107,22 @@ async def test_work_self_appraisal_knows_the_worker_is_bound() -> None:
     from engine.executors.work import WorkExecutor
 
     llm = _Capture('{"fact":"f","success":true,"outcome":"o","observation":"ob","why":""}')
-    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     await ex._generate_outcome(  # noqa: SLF001
-        agent=_agent(), purpose="誊抄名册", duration_label="约2小时", now_step=24,
+        agent=_agent(), tier=CheckTier.SUCCESS, purpose="誊抄名册", duration_label="约2小时", now_step=24,
+    )
+    assert MARK in llm.text()
+
+
+async def test_check_assessment_knows_the_actor_is_bound() -> None:
+    """Being bound is the first thing that sets the odds: an assessor that can't see it rates a
+    tied man's escape like a free man's stroll."""
+    from core.interfaces.action import ActionType
+    from engine.check import CheckAssessor
+
+    llm = _Capture('{"certainty": "uncertain", "difficulty": "hard", "edge": "worse"}')
+    await CheckAssessor(llm, seconds_per_step=3600).assess(
+        _agent(), action_type=ActionType.PHYSICAL, intent="挣开绳子", scene="", step=24,
     )
     assert MARK in llm.text()
 
@@ -138,7 +154,7 @@ async def test_physical_target_reaction_knows_the_target_was_already_bound() -> 
         '{"fact":"f","emotion_type":"anger","emotion_intensity":0.8,'
         '"emotion_valence":-0.7,"relation":"negative"}'
     )
-    ex = PhysicalExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = PhysicalExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     await ex._llm_target_reaction(  # noqa: SLF001
         target_agent=_agent(), actor_id="a1", actor_name="李世民",
         event_line="李世民揪住尉迟恭的衣领，将他按在墙上", succeeded=True, target_damage=0.0, target_relief=0.0, step=24,
@@ -275,7 +291,7 @@ async def test_work_interrupt_memory_knows_the_worker_is_bound() -> None:
     from core.interfaces.action import ActionType
 
     llm = _Capture('{"fact":"我正誊到一半，被人打断了。"}')
-    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     state = ActionExecutionState(
         execution_id="e1", action_type=ActionType.WORK, initiator_id="a2",
         participant_ids=["a2"], started_step=20, estimated_steps=4, remaining_steps=2,

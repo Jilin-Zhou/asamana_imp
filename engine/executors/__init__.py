@@ -5,6 +5,7 @@ from __future__ import annotations
 from core.interfaces.action import ActionType
 from core.interfaces.directory import WorldDirectory
 from core.interfaces.llm import LLMRouter
+from engine.check import CheckAssessor
 from engine.executors.base import ActionExecutionState, ActionExecutor
 from engine.executors.covert import CovertExecutor
 from engine.executors.errand import ErrandExecutor
@@ -12,7 +13,9 @@ from engine.executors.movement import MovementExecutor
 from engine.executors.physical import PhysicalExecutor
 from engine.executors.registry import ActionExecutorRegistry
 from engine.executors.simple import SimpleExecutor
+from core.interfaces.economy import Economy
 from engine.executors.social import SocialExecutor
+from engine.executors.trade import TradeExecutor
 from engine.executors.work import WorkExecutor
 
 
@@ -22,19 +25,31 @@ def build_default_registry(
     *,
     seconds_per_step: int = 3600,
     world_start_second_of_day: int = 0,
+    check_seed: str = "",
+    economy: Economy | None = None,
 ) -> ActionExecutorRegistry:
-    """Create and configure the default executor registry for a world run."""
+    """Create and configure the default executor registry for a world run.
+
+    ``check_seed`` seeds every check's dice (``engine.check``); pass the world id, so a world's
+    rolls are reproducible and no two worlds share them. ``economy`` is how amounts of money
+    read in a trade's narration.
+    """
     registry = ActionExecutorRegistry()
+    checks = CheckAssessor(llm_router, seconds_per_step=seconds_per_step, seed=check_seed)
     simple = SimpleExecutor(directory, seconds_per_step=seconds_per_step)
     social = SocialExecutor(
         llm_router, directory, seconds_per_step=seconds_per_step, world_start_second_of_day=world_start_second_of_day)
     movement = MovementExecutor(directory, seconds_per_step=seconds_per_step)
-    work = WorkExecutor(llm_router, directory, seconds_per_step=seconds_per_step)
-    physical = PhysicalExecutor(llm_router, directory, seconds_per_step=seconds_per_step)
+    work = WorkExecutor(llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
+    physical = PhysicalExecutor(
+        llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
     covert = CovertExecutor(
-        llm_router, directory, seconds_per_step=seconds_per_step,
+        llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step,
         world_start_second_of_day=world_start_second_of_day)
     errand = ErrandExecutor(directory)
+    trade = TradeExecutor(
+        llm_router, directory, seconds_per_step=seconds_per_step,
+        world_start_second_of_day=world_start_second_of_day, economy=economy)
 
     registry.register(ActionType.REST, simple)
     registry.register(ActionType.SEND_MESSAGE, simple)
@@ -44,6 +59,7 @@ def build_default_registry(
     registry.register(ActionType.PHYSICAL, physical)
     registry.register(ActionType.COVERT, covert)
     registry.register(ActionType.ERRAND, errand)
+    registry.register(ActionType.TRADE, trade)
 
     # The arbiter assumes every ActionType has an executor; a missing one is a config error (Rule 3).
     missing = [t for t in ActionType if registry.get_executor(t) is None]
@@ -66,6 +82,7 @@ __all__ = [
     "PhysicalExecutor",
     "SimpleExecutor",
     "SocialExecutor",
+    "TradeExecutor",
     "WorkExecutor",
     "build_default_registry",
 ]

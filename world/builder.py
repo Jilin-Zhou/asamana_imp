@@ -16,8 +16,10 @@ from world.initializer import WorldInitializer
 from world.models import (
     AgentDefinition, HistoricalEventSeed, LocationSeed, ThemeAnalysis, World, WorldEntitySeed,
 )
+from world.builders.ability_designer import AbilityDesigner
 from world.builders.agent_generator import AgentGenerator
 from world.builders.cast_designer import CastDesigner
+from world.builders.event_deck_designer import EventDeckDesigner
 from world.builders.template_selector import TemplateSelector
 from world.builders.theme_analyzer import ThemeAnalyzer
 
@@ -33,6 +35,8 @@ class WorldBuilder:
         self.theme_analyzer = ThemeAnalyzer(container.llm_router)
         self.agent_generator = AgentGenerator(container.llm_router)
         self._cast_designer = CastDesigner(container.llm_router)
+        self._ability_designer = AbilityDesigner(container.llm_router)
+        self._deck_designer = EventDeckDesigner(container.llm_router)
 
     async def build(
         self,
@@ -63,7 +67,7 @@ class WorldBuilder:
         resolved_world_id = world_id or str(uuid4())
         previous_context = get_log_context()
         # WORLD_INIT covers the whole build: theme analysis, cast design, agent
-        # generation, and initial goal generation all run within this context and
+        # generation, ability design, the event deck and initial goal generation all run within this context and
         # inherit the stage (and world_id) for observability.
         set_log_context(world_id=resolved_world_id, stage=Stage.WORLD_INIT.value)
         try:
@@ -102,6 +106,14 @@ class WorldBuilder:
             _canonicalize_agent_locations(agent_definitions, active_world_config)
             if on_phase is not None:
                 on_phase("world_build.agent_generation", agent_definitions)
+            agent_definitions = await self._ability_designer.design(analysis, agent_definitions)
+            if on_phase is not None:
+                on_phase("world_build.ability_design", agent_definitions)
+            analysis = await self._deck_designer.design(
+                analysis, [loc.name for loc in _world_config_locations(active_world_config)],
+            )
+            if on_phase is not None:
+                on_phase("world_build.event_deck", [card.to_dict() for card in analysis.event_deck])
             initializer = WorldInitializer(self._container, max_npcs=max_npcs)
             world = await initializer.initialize(
                 theme=theme,

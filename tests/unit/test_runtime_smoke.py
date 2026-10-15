@@ -116,6 +116,7 @@ def _build_runtime(
     world_id: str,
     registry: "ActionExecutorRegistry | None" = None,
     trace_sink=None,
+    narration_enabled: bool = False,
 ) -> tuple[NarrativeRuntime, EnvironmentSystem, MessageSystem]:
     environment = EnvironmentSystem(TiledWorldConfig(template="changan_iso"))
     message_system = MessageSystem(
@@ -146,6 +147,7 @@ def _build_runtime(
         pressure_evaluator=_SignalPressure(),
         trace_sink=trace_sink,
         llm_router=container.llm_router,
+        narration_enabled=narration_enabled,
     )
     return runtime, environment, message_system
 
@@ -276,6 +278,34 @@ async def test_narrative_runtime_runs_one_step_and_persists_contract_state(conta
     assert event["messages"] == snapshot.metadata["messages"]
     assert event["events"] == []
     assert event["environment"] == snapshot.metadata["environment"]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_step_reaches_the_narrator_with_its_records(container, monkeypatch) -> None:
+    """The narrator gets exactly what the snapshot keeps, after the step is saved, and the
+    step does not wait for it."""
+    from engine.stage_narrator import StageNarrator
+
+    written = []
+
+    async def _capture(self, material) -> None:  # noqa: ANN001
+        written.append(material)
+
+    monkeypatch.setattr(StageNarrator, "_narrate", _capture)
+    world_id = "world-narrated"
+    runtime, environment, _ = _build_runtime(container, world_id=world_id, narration_enabled=True)
+    environment.place_agent(agent_id="agent-1", location_id="palace")
+    agents = [_build_agent(container, world_id=world_id, agent_id="agent-1", name="Li Shimin", is_main_character=True)]
+    _set_work_decision(container)
+
+    await runtime.run_step(agents)
+    await runtime._narrator.drain()  # noqa: SLF001
+    snapshot = await container.snapshot.load(world_id, 1)
+    [material] = written
+    assert material.step == 1
+    assert list(material.actions) == snapshot.agent_summaries
+    assert material.time_label == snapshot.time_label
+    await runtime.aclose()
 
 
 @pytest.mark.asyncio

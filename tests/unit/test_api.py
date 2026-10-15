@@ -232,6 +232,28 @@ async def test_agent_profile_returns_static_identity(container, test_config) -> 
 
 
 @pytest.mark.asyncio
+async def test_agent_profile_carries_abilities_and_reads_a_world_without_them_as_ordinary(
+    container, test_config,
+) -> None:
+    world_id = "world-api"
+    await container.snapshot.save(world_id, 0, _snapshot(
+        world_id, 0, {},
+        profiles={
+            "agent-1": {"name": "甲", "abilities": {
+                "attributes": {"physique": 5}, "skills": [{"name": "骑射", "level": 3}],
+            }},
+            "agent-2": {"name": "乙"},
+        },
+    ))
+    client = _client(container, test_config)
+    first = client.get(f"/api/worlds/{world_id}/agents/agent-1/profile").json()["abilities"]
+    assert first["attributes"]["physique"] == 5 and first["attributes"]["nerve"] == 3
+    assert first["skills"] == [{"name": "骑射", "level": 3}]
+    second = client.get(f"/api/worlds/{world_id}/agents/agent-2/profile").json()["abilities"]
+    assert set(second["attributes"].values()) == {3} and second["skills"] == []
+
+
+@pytest.mark.asyncio
 async def test_agent_roster_carries_demographics(container, test_config) -> None:
     """The cast roster carries each agent's gender and age.
 

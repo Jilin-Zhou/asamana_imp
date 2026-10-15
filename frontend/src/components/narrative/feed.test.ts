@@ -16,6 +16,7 @@ const thing = (createdStep: number): EntityView => ({
   is_public: true,
   content: "",
   created_step: createdStep,
+  quantity: 0,
 });
 
 const at = (step: number, entities: Record<string, EntityView>): StepEvent =>

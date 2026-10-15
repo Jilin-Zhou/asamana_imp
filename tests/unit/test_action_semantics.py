@@ -271,6 +271,8 @@ class TestResolveDeed:
 # ---------------------------------------------------------------------------
 
 import pytest
+from tests.unit.check_fixtures import fixed_check
+from core.interfaces.check import CheckTier
 
 
 class _ScriptedLLM:
@@ -296,9 +298,9 @@ async def _judge_with(payload: str, *, agent, is_person: bool, has_entity: bool,
     from engine.environment import EnvironmentSystem
 
     llm = _ScriptedLLM(payload)
-    ex = PhysicalExecutor(llm, LiveWorldDirectory.from_agents({}, EnvironmentSystem()))  # type: ignore[arg-type]
+    ex = PhysicalExecutor(llm, LiveWorldDirectory.from_agents({}, EnvironmentSystem()), check_assessor=fixed_check())  # type: ignore[arg-type]
     verdict = await ex._judge(
-        agent, description="做点什么", expected_outcome="", scene="",
+        agent, tier=CheckTier.SUCCESS, description="做点什么", expected_outcome="", scene="",
         target_block="目标", is_person=is_person, has_entity=has_entity,
         seize_available=takeable, actor_holds=holds, needs_relation=needs_relation,
         recipient_line=recipient_line, step=1,

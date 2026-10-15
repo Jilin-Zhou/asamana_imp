@@ -4,12 +4,14 @@ MovementExecutor, WorkExecutor, and the registry."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agent.agent import Agent
 from agent.decision import ActionType, AgentAction, DecisionEngine
-from core.interfaces.action import ActionTarget, Deed, Observed, Ref
+from core.interfaces.action import ActionResult, ActionTarget, Deed, Observed, Ref
+from core.prompts import SituationVoice
 from core.interfaces.llm import LLMScene
 from agent.memory import MemorySystem
 from agent.need import NeedEngine
@@ -30,6 +32,8 @@ from engine.executors.work import WorkExecutor
 from engine.message_system import MessageSystem
 from world.models import EntityPresence, WorldEntity, WorldEntityType
 from core.interfaces.place import Place
+from tests.unit.check_fixtures import fixed_check
+from core.interfaces.check import CheckRecord, CheckTier, Difficulty, Edge
 
 
 # ---------------------------------------------------------------------------
@@ -1989,7 +1993,7 @@ class TestWorkExecutor:
         from core.interfaces.action import ActionResult
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2008,7 +2012,7 @@ class TestWorkExecutor:
 
     @pytest.mark.asyncio
     async def test_multi_step_work_creates_state(self, container) -> None:
-        executor = WorkExecutor(container.llm_router, _directory())
+        executor = WorkExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2021,7 +2025,7 @@ class TestWorkExecutor:
 
     @pytest.mark.asyncio
     async def test_work_tick_uses_natural_duration(self, container) -> None:
-        executor = WorkExecutor(container.llm_router, _directory(), seconds_per_step=3600)
+        executor = WorkExecutor(container.llm_router, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2042,7 +2046,7 @@ class TestWorkExecutor:
     async def test_work_complete_returns_result(self, container) -> None:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2066,7 +2070,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"fact": "我把换防部署令写完了。", "success": true,'
@@ -2101,7 +2105,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"fact": "我把栅栏筑起来了。", "success": true,'
@@ -2132,7 +2136,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"fact": "我把明日各步在心里走了一遍。", "success": true,'
@@ -2159,10 +2163,12 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(
+            container.llm_router, _directory(agents), check_assessor=fixed_check(CheckTier.FAILURE),
+        )
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
-            '{"fact": "终究没能写完。", "success": false,'
+            '{"fact": "终究没能写完。",'
             ' "product_name": "换防部署令", "product_desc": "还差一半",'
             ' "outcome": "常何没能写完。", "observation": "常何伏案半日。", "why": "时候不够"}'
         )
@@ -2184,7 +2190,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="李建成")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="draft", name="誊清的说辞", entity_type=WorldEntityType.ITEM,
@@ -2221,7 +2227,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"fact": "我写好了给秦王的信。", "success": true,'
@@ -2245,7 +2251,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="李建成")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="draft", name="奏章", entity_type=WorldEntityType.ITEM,
@@ -2282,7 +2288,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="timber", name="一段木料", entity_type=WorldEntityType.ITEM,
@@ -2316,7 +2322,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="scroll", name="一卷旧册", entity_type=WorldEntityType.ITEM,
@@ -2347,7 +2353,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="scroll", name="一卷旧册", entity_type=WorldEntityType.ITEM,
@@ -2394,7 +2400,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="李建成")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="onfloor", name="案上的旧稿", entity_type=WorldEntityType.ITEM,
@@ -2426,7 +2432,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="常何")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"fact": "我把换防部署令写完了。", "success": true,'
@@ -2452,10 +2458,13 @@ class TestWorkExecutor:
         from core.interfaces.action import ActionResult
         from engine.executors.work import WorkExecutor as WE
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = WE(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = WE(
+            container.llm_router, _directory({"agent-a": agent_a}),
+            check_assessor=fixed_check(CheckTier.FAILURE),
+        )
 
         async def _fail_outcome(
-            self_inner, *, agent, purpose, duration_label, now_step=0, location="",
+            self_inner, *, agent, tier, purpose, duration_label, now_step=0, location="",
             situation_header="", scene="", expected_outcome="", in_hand=None,
         ):
             from engine.executors.work import _WorkVerdict
@@ -2495,16 +2504,18 @@ class TestWorkExecutor:
         assert "没理清" in result.outcome and "A：" not in result.outcome
 
     @pytest.mark.asyncio
-    async def test_work_llm_self_judge_can_fail(self, container) -> None:
-        """WORK is self-appraised by the LLM, and a failed verdict propagates. There is no rule
+    async def test_work_can_fail(self, container) -> None:
+        """A failed check propagates to WORK's result, written in character. There is no rule
         template that defaults to success."""
         from core.interfaces.action import ActionResult
         from core.interfaces.llm import LLMScene
-        executor = WorkExecutor(container.llm_router, _directory())
+        executor = WorkExecutor(
+            container.llm_router, _directory(), check_assessor=fixed_check(CheckTier.FAILURE),
+        )
         agent_main = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
-            '{"success": false, "fact": "账目出了差错，未能理清。"}'
+            '{"fact": "账目出了差错，未能理清。"}'
         )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2520,9 +2531,9 @@ class TestWorkExecutor:
         result = results[0]
         assert isinstance(result, ActionResult)
         assert result.succeeded is False
-        # The LLM's self-appraised failure goes into the 1p factual_memory.
+        # The in-character account of the failure goes into the 1p factual_memory.
         assert result.factual_memory == "账目出了差错，未能理清。"
-        # The judge returned success/fact but no 3p outcome, so this falls back to the binary
+        # The judge returned a fact but no 3p outcome, so this falls back to the binary
         # template in _outcome(). That template never quotes the first-person purpose, which would
         # give the mixed-voice "甲在「我整理账本…」上忙活".
         assert result.outcome == "在hall，某人忙活了一阵，终究没能做成手上的事。"
@@ -2537,8 +2548,8 @@ class TestWorkExecutor:
         assert "在场的其他人" in prompt    # scene evidence is included (agent-b is in hall with the actor)
 
     @pytest.mark.asyncio
-    async def test_work_background_agent_is_llm_judged_and_can_fail(self, container) -> None:
-        """A background agent's WORK is also self-appraised by the LLM, and failed verdicts
+    async def test_work_background_agent_is_checked_and_can_fail(self, container) -> None:
+        """A background agent's WORK goes through the same check and LLM narration, and failures
         propagate.
 
         Background agents must not fall back to a rule template that defaults to success. If they
@@ -2547,11 +2558,12 @@ class TestWorkExecutor:
         """
         from core.interfaces.action import ActionResult
         from core.interfaces.llm import LLMScene
-        executor = WorkExecutor(container.llm_router, _directory())
+        checks = fixed_check(CheckTier.FAILURE)
+        executor = WorkExecutor(container.llm_router, _directory(), check_assessor=checks)
         agent_bg = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=False)
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
-            '{"success": false, "fact": "账目太乱，没能理清。"}'
+            '{"fact": "账目太乱，没能理清。"}'
         )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2568,6 +2580,7 @@ class TestWorkExecutor:
         assert isinstance(result, ActionResult)
         assert result.succeeded is False           # background agents can fail too
         assert result.adjudication_failed is False  # a real event in the world, not an infrastructure failure
+        assert len(checks.calls) == 1               # the same check as a main character's
         assert result.factual_memory == "账目太乱，没能理清。"
         assert "没能做成" in result.outcome
 
@@ -2579,7 +2592,7 @@ class TestWorkExecutor:
         place ordinarily has, so the work can't fail for want of it."""
         from core.interfaces.llm import LLMScene
         from engine.scene import _ORDINARY_FIXTURES_LINE
-        executor = WorkExecutor(container.llm_router, _directory())
+        executor = WorkExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2611,7 +2624,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="dossier", name="毒酒案卷", entity_type=WorldEntityType.ITEM,
@@ -2635,7 +2648,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2666,7 +2679,7 @@ class TestWorkExecutor:
             core_traits=["多疑善妒"], background="自幼在暗处替人打探消息",
         )
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()   # agent-b is in hall with the actor
         agent_b.personality.begin_action(
             step=1, description="我暗中盯着他翻检案卷", activity_status=AgentActivityStatus.IDLE,
@@ -2692,7 +2705,7 @@ class TestWorkExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="ledger-7", name="账册", entity_type=WorldEntityType.ITEM,
@@ -2721,7 +2734,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2740,7 +2753,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.move_body(body_id="agent-b", location_id="garden")   # only the actor is left, and hall has no items
         action = _make_action(
@@ -2765,7 +2778,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps({
             "success": True,
@@ -2796,7 +2809,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps({
             "fact": "我理出了三条可用的线索。", "success": True,
@@ -2823,7 +2836,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps({
             "fact": "我理出了三条可用的线索。", "success": True,
@@ -2848,7 +2861,7 @@ class TestWorkExecutor:
         from core.interfaces.llm import LLMScene
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A")
         agents = {"agent-a": agent_a}
-        executor = WorkExecutor(container.llm_router, _directory(agents))
+        executor = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -2868,7 +2881,7 @@ class TestWorkExecutor:
         deterministic. The interruption is a real, known event and gets recorded even when the
         narration LLM fails.
         """
-        executor = WorkExecutor(_RaisingLLM(), _directory(), seconds_per_step=3600)  # type: ignore[arg-type]
+        executor = WorkExecutor(_RaisingLLM(), _directory(), seconds_per_step=3600, check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=False)
         agents = {"agent-a": agent_a}
@@ -2932,7 +2945,7 @@ class TestPhysicalExecutor:
         items get no owner line."""
         from engine.executors.physical import PhysicalExecutor
         owner = _make_agent(container, world_id="w", agent_id="owner-1", name="李世民", is_main=True)
-        executor = PhysicalExecutor(container.llm_router, _directory({"owner-1": owner}))
+        executor = PhysicalExecutor(container.llm_router, _directory({"owner-1": owner}), check_assessor=fixed_check())
         held = WorldEntity(
             entity_id="sword", name="天子剑", entity_type=WorldEntityType.ITEM,
             state="intact", description="一柄宝剑", is_takeable=True,
@@ -2959,7 +2972,7 @@ class TestPhysicalExecutor:
     ) -> None:
         from core.interfaces.action import ActionResult
         from engine.executors.physical import PhysicalExecutor
-        executor = PhysicalExecutor(container.llm_router, _directory())
+        executor = PhysicalExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
 
         from engine.executors.physical import _Verdict
@@ -2997,7 +3010,7 @@ class TestPhysicalExecutor:
     ) -> None:
         from core.interfaces.action import ActionResult
         from engine.executors.physical import PhysicalExecutor
-        executor = PhysicalExecutor(container.llm_router, _directory())
+        executor = PhysicalExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
 
         from engine.executors.physical import _Verdict
@@ -3065,7 +3078,7 @@ class TestPhysicalExecutor:
 
         monkeypatch.setattr(PhysicalExecutor, "_judge", _judge)
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        executor = PhysicalExecutor(container.llm_router, _directory())
+        executor = PhysicalExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL, action_description="对乙动手",
@@ -3106,7 +3119,7 @@ class TestPhysicalExecutor:
         monkeypatch.setattr(PhysicalExecutor, "_judge", _judge)
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
-        executor = PhysicalExecutor(container.llm_router, _directory())
+        executor = PhysicalExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = _make_environment()
         agents = {"agent-a": agent_a, "agent-b": agent_b}
         action = AgentAction(
@@ -3136,7 +3149,7 @@ class TestPhysicalExecutor:
         )
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         item = WorldEntity(
             entity_id="lantern", name="lantern", entity_type=WorldEntityType.ITEM,
@@ -3182,7 +3195,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="tally", name="虎符", entity_type=WorldEntityType.ITEM,
@@ -3226,7 +3239,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="tally", name="虎符", entity_type=WorldEntityType.ITEM,
@@ -3275,7 +3288,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="tally", name="虎符", entity_type=WorldEntityType.ITEM,
@@ -3319,7 +3332,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
@@ -3357,7 +3370,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="tally", name="虎符", entity_type=WorldEntityType.ITEM,
@@ -3398,7 +3411,7 @@ class TestPhysicalExecutor:
         monkeypatch.setattr(PhysicalExecutor, "_judge", _seize_judge)
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()                      # agent-a is in hall
         env.register_entity(WorldEntity(
             entity_id="far_gate", name="城门", entity_type=WorldEntityType.ITEM,
@@ -3443,7 +3456,7 @@ class TestPhysicalExecutor:
         monkeypatch.setattr(PhysicalExecutor, "_judge", _seize_judge)
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="letter_7", name="密信", entity_type=WorldEntityType.ITEM,
@@ -3482,7 +3495,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
             '{"success": true, "fact": "我按住了他。"}'   # the judge left out the outcome
@@ -3514,7 +3527,7 @@ class TestPhysicalExecutor:
         monkeypatch.setattr(PhysicalExecutor, "_judge", _seize_judge)
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="lantern", name="灯笼", entity_type=WorldEntityType.ITEM,
@@ -3552,7 +3565,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
 
         def _env_with_tally() -> EnvironmentSystem:
             env = _make_environment()
@@ -3615,7 +3628,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="tally", name="虎符", entity_type=WorldEntityType.ITEM,
@@ -3647,7 +3660,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         env.place_agent(agent_id="agent-b", location_id="garden")
         env.register_entity(WorldEntity(
@@ -3681,7 +3694,7 @@ class TestPhysicalExecutor:
             )
 
         monkeypatch.setattr(PhysicalExecutor, "_judge", _destroy_judge)
-        executor = PhysicalExecutor(None, _directory())  # type: ignore[arg-type]
+        executor = PhysicalExecutor(None, _directory(), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         env.register_entity(WorldEntity(
             entity_id="lantern", name="lantern", entity_type=WorldEntityType.ITEM,
@@ -3693,8 +3706,10 @@ class TestPhysicalExecutor:
             action_description="砸碎灯笼",
             target=ActionTarget(acts_on=[Ref.entity("lantern", "item")]),
         )
-        state = await executor.start(action, 1, agents={}, environment=env, message_system=None)
-        results = await executor.complete(state, 1, agents={}, environment=env, message_system=None)
+        # Any actor will do: the stubbed judge never reads him, but a missing one is a null step.
+        agents = {"agent-a": SimpleNamespace(agent_id="agent-a", is_active=True)}
+        state = await executor.start(action, 1, agents=agents, environment=env, message_system=None)
+        results = await executor.complete(state, 1, agents=agents, environment=env, message_system=None)
         result = results[0]
         assert isinstance(result, ActionResult) and result.succeeded
         assert len(result.entity_state_changes) == 1
@@ -3709,7 +3724,7 @@ class TestPhysicalExecutor:
         from engine.executors.physical import PhysicalExecutor
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1,
@@ -3729,7 +3744,7 @@ class TestPhysicalExecutor:
     async def test_attack_agent_different_location_returns_infeasible(self) -> None:
         from core.interfaces.action import ActionResult
         from engine.executors.physical import PhysicalExecutor
-        executor = PhysicalExecutor(None, _directory())  # type: ignore[arg-type]
+        executor = PhysicalExecutor(None, _directory(), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = EnvironmentSystem()
         env.place_agent(agent_id="agent-a", location_id="hall")
         env.place_agent(agent_id="agent-b", location_id="garden")
@@ -3773,7 +3788,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1,
             action_type=ActionType.PHYSICAL,
@@ -3843,7 +3858,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="提起被捆的乙，押他去别处关起来",
@@ -3877,7 +3892,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="伸手去夺乙手里的东西",
@@ -3905,7 +3920,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=False)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1,
             action_type=ActionType.PHYSICAL,
@@ -3957,7 +3972,7 @@ class TestPhysicalExecutor:
             "agent-a": _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True),
             "agent-b": _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True),
         }
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="攻击对方", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -3999,7 +4014,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1,
             action_type=ActionType.PHYSICAL,
@@ -4055,7 +4070,7 @@ class TestPhysicalExecutor:
             "agent-a": _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True),
             "agent-b": _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True),
         }
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="攻击对方", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4105,7 +4120,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="搀扶踉跄的对方", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4142,7 +4157,7 @@ class TestPhysicalExecutor:
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agent_b.personality.apply_vitality_damage(0.6)          # badly hurt: 0.4 left
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="为他敷药", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4184,7 +4199,7 @@ class TestPhysicalExecutor:
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agent_b.personality.apply_vitality_damage(0.55)         # 0.45 left: the net loss of 0.3 leaves him alive; damage alone (0.5) would kill him
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="刺他一刀", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4227,7 +4242,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="把他弄醒", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4270,7 +4285,7 @@ class TestPhysicalExecutor:
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agent_b.personality.apply_vitality_damage(0.5)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="撞开他又扶稳", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4308,7 +4323,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="划他一下又止住", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4351,7 +4366,7 @@ class TestPhysicalExecutor:
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agent_b.personality.apply_vitality_damage(0.75)          # 0.25 left: close to dying of thirst, not wounded
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
             action_description="把水囊递到他唇边", target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
@@ -4384,7 +4399,7 @@ class TestPhysicalExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
 
         person = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
@@ -4440,7 +4455,7 @@ class TestPhysicalExecutor:
         env.place_agent(agent_id="agent-a", location_id="hall-loc")
         env.place_agent(agent_id="agent-b", location_id="garden-loc")
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=False)
-        executor = PhysicalExecutor(container.llm_router, _directory({"agent-b": agent_b}))
+        executor = PhysicalExecutor(container.llm_router, _directory({"agent-b": agent_b}), check_assessor=fixed_check())
         action = AgentAction(
             agent_id="agent-a", step=1,
             action_type=ActionType.PHYSICAL,
@@ -4461,7 +4476,7 @@ class TestPhysicalExecutor:
     async def test_untracked_object_has_no_target_effects(self) -> None:
         from core.interfaces.action import ActionResult
         from engine.executors.physical import PhysicalExecutor
-        executor = PhysicalExecutor(None, _directory())  # type: ignore[arg-type]
+        executor = PhysicalExecutor(None, _directory(), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1,
@@ -4483,7 +4498,7 @@ class TestPhysicalExecutor:
         from engine.executors.physical import PhysicalExecutor
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent_a}
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         landmark = WorldEntity(
             entity_id="gate_sign",
@@ -4524,7 +4539,7 @@ class TestCovertExecutor:
         """A covert action's first step carries nothing to bystanders: whether it's perceived is
         decided only by complete()'s detection adjudication. opening_outcome (god view) still names
         the deed."""
-        executor = CovertExecutor(container.llm_router, _directory())
+        executor = CovertExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = EnvironmentSystem()
         env.space.register_place(Place(
             place_id="vault", name="vault", description="", connections={}, is_public=False, capacity=50,
@@ -4542,7 +4557,7 @@ class TestCovertExecutor:
     async def test_covert_tick_has_no_bystander_observation(self, container) -> None:
         """The covert progress beat splits like its start, at the field level regardless of carry
         routing: outcome names the deed (god view), observation is empty."""
-        executor = CovertExecutor(container.llm_router, _directory())
+        executor = CovertExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = EnvironmentSystem()
         env.space.register_place(Place(
             place_id="vault", name="vault", description="", connections={}, is_public=False, capacity=50,
@@ -4565,7 +4580,7 @@ class TestCovertExecutor:
         from core.interfaces.llm import LLMScene
         from engine.executors.covert import CovertExecutor
 
-        executor = CovertExecutor(container.llm_router, _directory())
+        executor = CovertExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         # Force the LLM-failure path: a non-JSON response gives verdict None, so no exposure is
         # invented.
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = "not json"
@@ -4608,19 +4623,20 @@ class TestCovertExecutor:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("achieved", "detected"),
+        ("tier", "achieved", "detected"),
         [
-            (True, False),   # complete success: found something and nobody noticed
-            (True, True),    # found something but was exposed
-            (False, False),  # found nothing but stayed hidden
-            (False, True),   # complete failure
+            (CheckTier.SUCCESS, True, False),           # found something and nobody noticed
+            (CheckTier.COSTLY_SUCCESS, True, True),     # found something but was exposed
+            (CheckTier.FAILURE, False, False),          # found nothing but stayed hidden
+            (CheckTier.CRITICAL_FAILURE, False, True),  # complete failure
         ],
     )
     async def test_covert_quadrant_succeeded_and_detected(
-        self, container, achieved: bool, detected: bool,
+        self, container, tier: CheckTier, achieved: bool, detected: bool,
     ) -> None:
-        """achieved and detected are independent: succeeded follows achieved, and detected has its
-        own channel."""
+        """One check fills both channels with someone watching: succeeded follows the tier (a
+        failed check catches nothing, whatever the judge says it read), and exposure is the cost
+        of a costly success and part of a critical failure."""
         import json
 
         from core.interfaces.action import ActionResult
@@ -4630,12 +4646,14 @@ class TestCovertExecutor:
         # The fact says what he found, not what he did: achieved means something was gained, not
         # that the action finished.
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps(
-            {"achieved": achieved, "detected": detected, "fact": "我看清密信上写着三日后动手"},
+            {"achieved": True, "fact": "我看清密信上写着三日后动手"},
             ensure_ascii=False,
         )
-        env = _make_environment()
+        env = _make_environment()  # agent-b is in the hall to notice
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(
+            container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check(tier),
+        )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="翻看密信",
         )
@@ -4651,6 +4669,32 @@ class TestCovertExecutor:
         assert result.succeeded is achieved
         assert result.detected is detected
         assert result.factual_memory == "我看清密信上写着三日后动手"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tier", [CheckTier.COSTLY_SUCCESS, CheckTier.CRITICAL_FAILURE])
+    async def test_covert_alone_is_never_exposed(self, container, tier: CheckTier) -> None:
+        """With nobody else at the place there is no one to notice: the tiers that expose him in
+        company cost him completeness instead, and the judge is told so."""
+        from core.interfaces.llm import LLMScene
+        from engine.executors.covert import CovertExecutor
+
+        provider = container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION)
+        provider.fixed_response = '{"achieved": true, "fact": "我只听见了半句"}'
+        env = _make_chain_env(["hall"])  # agent-a alone
+        agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
+        executor = CovertExecutor(
+            container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check(tier),
+        )
+        action = _make_action(agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处")
+        state = await executor.start(action, 1, agents={"agent-a": agent_a}, environment=env, message_system=None)
+        [result] = await executor.complete(
+            state, 1, agents={"agent-a": agent_a}, environment=env, message_system=None,
+        )
+        assert result.detected is False
+        assert result.observations == []
+        prompt = _joined(provider.call_history[-1])
+        assert "无人察觉" in prompt
+        assert "被在场的人察觉" not in prompt
 
     @pytest.mark.asyncio
     async def test_covert_judge_is_told_this_action_moves_nobody(self, container) -> None:
@@ -4672,7 +4716,7 @@ class TestCovertExecutor:
         )
         env = _make_environment()
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="潜行至别处，暗中观察",
         )
@@ -4706,7 +4750,7 @@ class TestCovertExecutor:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=True)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = CovertExecutor(container.llm_router, _directory(agents))
+        executor = CovertExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT,
             description="假寐留意乙的一举一动，看她会不会对案上那物做什么",
@@ -4739,13 +4783,15 @@ class TestCovertExecutor:
         from engine.executors.covert import CovertExecutor
 
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps(
-            {"achieved": True, "detected": detected, "outcome": "甲在帘后窥探",
-             "fact": "我听见他们议定三日后动手"},
+            {"achieved": True, "outcome": "甲在帘后窥探", "fact": "我听见他们议定三日后动手"},
             ensure_ascii=False,
         )
         env = _make_environment()
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(
+            container.llm_router, _directory({"agent-a": agent_a}),
+            check_assessor=fixed_check(CheckTier.COSTLY_SUCCESS if detected else CheckTier.SUCCESS),
+        )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
         )
@@ -4790,7 +4836,7 @@ class TestCovertExecutor:
             location_id=loc, outcome="他自己弄出的动静", step=3, actor_ids=("agent-a",),
         )
 
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
         )
@@ -4833,7 +4879,7 @@ class TestCovertExecutor:
             location_id=loc, outcome="刚才的那件事", step=5, actor_ids=("other",),
         )
 
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
         )
@@ -4885,7 +4931,7 @@ class TestCovertExecutor:
         )
 
         executor = CovertExecutor(
-            container.llm_router, _directory({"agent-a": agent_a, "agent-b": agent_b}),
+            container.llm_router, _directory({"agent-a": agent_a, "agent-b": agent_b}), check_assessor=fixed_check(),
         )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
@@ -4901,7 +4947,7 @@ class TestCovertExecutor:
         prompt = _joined(provider.call_history[-1])
         assert "密信" not in prompt, "在场者打算做什么,秘密行动的裁决不该看见"
         assert "此刻意图" not in prompt
-        assert "此刻正忙着手上的事" in prompt, "忙/闲这一维要留着——判 detected 靠它"
+        assert "此刻正忙着手上的事" in prompt, "忙/闲这一维要留着——难度评估看同一份现场,写谁察觉了他也靠它"
 
     @pytest.mark.asyncio
     async def test_covert_judge_is_told_when_nothing_happened_here(self, container) -> None:
@@ -4920,7 +4966,7 @@ class TestCovertExecutor:
         )
         env = _make_environment()
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
         )
@@ -4932,7 +4978,7 @@ class TestCovertExecutor:
         )
         prompt = _joined(provider.call_history[-1])
         assert "没有任何事发生" in prompt
-        assert "探到了什么" in prompt, "裁决任务问的是所得,不是动作完成度"
+        assert "探到本来拿不到的东西" in prompt, "裁决问的是所得,不是动作完成度"
 
     @pytest.mark.asyncio
     async def test_covert_missing_field_claims_nothing_gained(self, container) -> None:
@@ -4948,7 +4994,7 @@ class TestCovertExecutor:
         )
         env = _make_environment()
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}), check_assessor=fixed_check())
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="盯住此处",
         )
@@ -4993,7 +5039,7 @@ class TestCovertExecutor:
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=False)
         executor = CovertExecutor(
             container.llm_router,
-            LiveWorldDirectory.from_agents({"agent-a": agent_a, "agent-b": agent_b}, env),
+            LiveWorldDirectory.from_agents({"agent-a": agent_a, "agent-b": agent_b}, env), check_assessor=fixed_check(),
         )
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="藏起一件信物",
@@ -5239,18 +5285,21 @@ class TestCovertExecutor:
         assert "暗记" not in borne                            # not god's-eye visibility
 
     @pytest.mark.asyncio
-    async def test_covert_interrupt_llm_detected(self, container) -> None:
-        """The LLM rules that the interrupted action was exposed: succeeded=False, gap=0.8, notes
-        carry True, and the verdict's fact is used."""
+    async def test_covert_interrupt_exposed_by_the_check(self, container) -> None:
+        """An interrupted lurk still rolls: a costly roll with someone present exposes him. It is
+        unfinished, so succeeded=False whatever the judge says, and the verdict's fact is used."""
         from core.interfaces.llm import LLMScene
         from engine.executors.covert import CovertExecutor
 
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
-            '{"achieved": true, "detected": true, "fact": "仓促间撞翻烛台，被人看见了"}'
+            '{"achieved": true, "fact": "仓促间撞翻烛台，被人看见了"}'
         )
         env = _make_environment()  # agent-a and agent-b are both in hall
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = CovertExecutor(container.llm_router, _directory({"agent-a": agent_a}))
+        executor = CovertExecutor(
+            container.llm_router, _directory({"agent-a": agent_a}),
+            check_assessor=fixed_check(CheckTier.COSTLY_SUCCESS),
+        )
         state = ActionExecutionState.create(
             target=ActionTarget(),
             action_type=ActionType.COVERT,
@@ -5284,7 +5333,7 @@ class TestExecutorLLMFailureFallback:
         from core.interfaces.action import ActionResult
 
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = WorkExecutor(_RaisingLLM(), _directory())  # type: ignore[arg-type]
+        executor = WorkExecutor(_RaisingLLM(), _directory(), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -5312,7 +5361,7 @@ class TestExecutorLLMFailureFallback:
         from engine.executors.covert import CovertExecutor
 
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="A", is_main=True)
-        executor = CovertExecutor(_RaisingLLM(), _directory({"agent-a": agent_a}))  # type: ignore[arg-type]
+        executor = CovertExecutor(_RaisingLLM(), _directory({"agent-a": agent_a}), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="窃取兵符",
@@ -5339,7 +5388,7 @@ class TestExecutorLLMFailureFallback:
         agent_a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲", is_main=True)
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=False)
         agents = {"agent-a": agent_a, "agent-b": agent_b}
-        executor = PhysicalExecutor(_RaisingLLM(), _directory(agents))  # type: ignore[arg-type]
+        executor = PhysicalExecutor(_RaisingLLM(), _directory(agents), check_assessor=fixed_check())  # type: ignore[arg-type]
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
@@ -5406,7 +5455,7 @@ class TestExecutorMissingActorAdjudicationFailed:
 
         agent_b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙", is_main=False)
         agents = {"agent-b": agent_b}  # actor agent-a is missing
-        executor = PhysicalExecutor(container.llm_router, _directory(agents))
+        executor = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         env = _make_environment()
         action = AgentAction(
             agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
@@ -5433,7 +5482,7 @@ class TestExecutorMissingActorAdjudicationFailed:
         from core.interfaces.action import ActionResult
         from engine.executors.covert import CovertExecutor
 
-        executor = CovertExecutor(container.llm_router, _directory())
+        executor = CovertExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.COVERT, description="窃取兵符",
@@ -5453,7 +5502,7 @@ class TestExecutorMissingActorAdjudicationFailed:
         """WorkExecutor: actor missing gives a null step, never a template success."""
         from core.interfaces.action import ActionResult
 
-        executor = WorkExecutor(container.llm_router, _directory())
+        executor = WorkExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
         env = _make_environment()
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK,
@@ -5543,7 +5592,7 @@ class TestNarrativePrinciple:
     async def test_work_tick_states_who_where(self, container) -> None:
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}))
+        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}), check_assessor=fixed_check())
         [tr] = await ex.tick(self._state(ActionType.WORK, "批阅文书"), 2,
                              agents={}, environment=env, message_system=None)
         assert "甲" in tr.outcome and "在hall，" in tr.outcome
@@ -5560,7 +5609,7 @@ class TestNarrativePrinciple:
         """
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}))
+        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}), check_assessor=fixed_check())
         desc = "我回到书房，摊开卷宗逐页细读。"
         action = _make_action(
             agent_id="agent-a", action_type=ActionType.WORK, description=desc, estimated_steps=3,
@@ -5588,7 +5637,7 @@ class TestNarrativePrinciple:
         judgment of its quality goes only into the factual memory."""
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}))
+        ex = WorkExecutor(container.llm_router, _directory({"agent-a": agent}), check_assessor=fixed_check())
         [res] = await ex.complete(self._state(ActionType.WORK, "批阅文书"), 5,
                                   agents={"agent-a": agent}, environment=env, message_system=None)
         assert "在hall，" in res.outcome                          # scene_line still adds the location prefix
@@ -5613,7 +5662,7 @@ class TestNarrativePrinciple:
     async def test_covert_tick_states_who_where(self, container) -> None:
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = CovertExecutor(container.llm_router, _directory({"agent-a": agent}))
+        ex = CovertExecutor(container.llm_router, _directory({"agent-a": agent}), check_assessor=fixed_check())
         [tr] = await ex.tick(self._state(ActionType.COVERT, "潜行查探"), 2,
                              agents={}, environment=env, message_system=None)
         assert "甲" in tr.outcome and "在hall，" in tr.outcome
@@ -5792,7 +5841,7 @@ class TestFailureReasonContract:
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = "not json"
         env = _make_environment()
         a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = WorkExecutor(container.llm_router, _directory({"agent-a": a}))
+        ex = WorkExecutor(container.llm_router, _directory({"agent-a": a}), check_assessor=fixed_check())
         [res] = await ex.complete(
             self._work_state(), 1, agents={"agent-a": a}, environment=env, message_system=None,
         )
@@ -5804,12 +5853,14 @@ class TestFailureReasonContract:
         """The judge's reason belongs to the full record: it goes into an outcome-side field, never
         into the bystander's perception string."""
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps({
-            "success": False, "fact": "我没能理清账目。",
+            "fact": "我没能理清账目。",
             "outcome": "甲对着账本忙了半日，终究没理清。", "why": "账册本身有出入",
         }, ensure_ascii=False)
         env = _make_environment()
         a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
-        ex = WorkExecutor(container.llm_router, _directory({"agent-a": a}))
+        ex = WorkExecutor(
+            container.llm_router, _directory({"agent-a": a}), check_assessor=fixed_check(CheckTier.FAILURE),
+        )
         [res] = await ex.complete(
             self._work_state(), 1, agents={"agent-a": a}, environment=env, message_system=None,
         )
@@ -5896,15 +5947,17 @@ class TestActorAlwaysNamedIn3p:
     async def test_anonymous_judge_outcome_gets_the_name_back(self, container, action_type) -> None:
         """An outcome where the judge named nobody must name the actor by the time it's recorded."""
         container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = json.dumps({
-            "success": True, "achieved": True, "detected": True,
+            "achieved": True,
             "outcome": "那桩事悄没声地办妥了。",     # no subject
             "fact": "我把事办妥了。", "why": "",
         }, ensure_ascii=False)
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="李世民")
         agents = {"agent-a": agent}
+        # A costly roll with agent-b present exposes the COVERT, so the bystander channel is
+        # exercised too.
         ex = (WorkExecutor if action_type == ActionType.WORK else CovertExecutor)(
-            container.llm_router, _directory(agents),
+            container.llm_router, _directory(agents), check_assessor=fixed_check(CheckTier.COSTLY_SUCCESS),
         )
         state = ActionExecutionState.create(
             target=ActionTarget(), action_type=action_type, initiator_id="agent-a",
@@ -5975,7 +6028,7 @@ class TestClosedWorldRuleReachesEveryFactAuthor:
         env = _make_environment()
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent}
-        ex = WorkExecutor(container.llm_router, _directory(agents))
+        ex = WorkExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
         state = ActionExecutionState.create(
             target=ActionTarget(), action_type=ActionType.WORK, initiator_id="agent-a",
             participant_ids=["agent-a"], purpose="整理账本", started_step=1,
@@ -5991,7 +6044,7 @@ class TestClosedWorldRuleReachesEveryFactAuthor:
         agent = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
         agents = {"agent-a": agent}
         if kind == "covert":
-            ex = CovertExecutor(container.llm_router, _directory(agents))
+            ex = CovertExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
             state = ActionExecutionState.create(
                 target=ActionTarget(), action_type=ActionType.COVERT, initiator_id="agent-a",
                 participant_ids=["agent-a"], purpose="窥探", started_step=1,
@@ -5999,7 +6052,7 @@ class TestClosedWorldRuleReachesEveryFactAuthor:
             )
         else:
             from engine.executors.physical import PhysicalExecutor
-            ex = PhysicalExecutor(container.llm_router, _directory(agents))
+            ex = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check())
             state = ActionExecutionState.create(
                 target=ActionTarget(acts_on=[Ref.entity("door", "object")]),
                 action_type=ActionType.PHYSICAL, initiator_id="agent-a",
@@ -6464,3 +6517,157 @@ async def test_default_interrupt_gist_leaves_out_the_thought(container) -> None:
     )
     assert "变了主意" in result.outcome and "变了主意" not in result.gist
     assert "差人送信" in result.gist
+
+
+# ---------------------------------------------------------------------------
+# Checks drive the result (engine/check.py)
+# ---------------------------------------------------------------------------
+
+class TestChecksDriveTheResult:
+    """PHYSICAL, COVERT and WORK narrate a settled check: the tier decides success, the roll
+    rides out on the result for the observer, and a failed assessment is a null step."""
+
+    # 2+2+1 + 2 (better) = 7 against hard's 14: margin −7, a critical failure.
+    _ROUT = CheckRecord(difficulty=Difficulty.HARD, edge=Edge.BETTER, pure_chance=False, dice=(2, 2, 1))
+    # 4+3+3 = 10 against normal's 11: margin −1, a costly success.
+    _COSTLY = CheckRecord(difficulty=Difficulty.NORMAL, edge=Edge.EVEN, pure_chance=False, dice=(4, 3, 3))
+
+    def _strike(self) -> AgentAction:
+        return AgentAction(
+            agent_id="agent-a", step=1, action_type=ActionType.PHYSICAL,
+            action_description="一拳打向乙",
+            target=ActionTarget(acts_on=[Ref.agent("agent-b")]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_physical_judge_writes_the_tier_it_is_handed(self, container) -> None:
+        """The judge's own "success" can no longer overturn the roll; it is told the tier in
+        words and asked for no verdict field."""
+        from engine.check import tier_phrase
+        from engine.executors.physical import PhysicalExecutor
+
+        provider = container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION)
+        provider.fixed_response = json.dumps({
+            "reason": "乙早有防备", "deed": "strike", "success": True,
+            "outcome": "甲一拳扑空，自己踉跄了一下", "fact": "我扑了个空", "why": "对方早有防备",
+            "relation": "negative", "actor_damage": 0.0, "target_damage": 0.0,
+        }, ensure_ascii=False)
+        a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
+        b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
+        agents = {"agent-a": a, "agent-b": b}
+        checks = fixed_check(record=self._ROUT)
+        ex = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=checks)
+        env = _make_environment()
+        before = len(provider.call_history)
+        state = await ex.start(self._strike(), 1, agents=agents, environment=env, message_system=None)
+        [result] = await ex.complete(state, 1, agents=agents, environment=env, message_system=None)
+
+        assert result.succeeded is False
+        assert result.failure_reason == "对方早有防备"
+        assert result.check == self._ROUT
+        judge_prompt = _joined(provider.call_history[before])
+        assert "【已定结果】" in judge_prompt
+        assert tier_phrase(CheckTier.CRITICAL_FAILURE, voice=SituationVoice.THIRD) in judge_prompt
+        assert '"success"' not in judge_prompt
+        # The assessor saw the same target the judge did.
+        [call] = checks.calls
+        assert call["action_type"] is ActionType.PHYSICAL
+        assert "乙" in call["target_block"]
+
+    @pytest.mark.asyncio
+    async def test_physical_failed_assessment_is_a_null_step(self, container) -> None:
+        """No assessment, no roll, no judge: nothing is narrated or remembered (Rule 1)."""
+        from engine.executors.physical import PhysicalExecutor
+        from tests.unit.check_fixtures import FailedCheckAssessor
+
+        provider = container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION)
+        a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
+        b = _make_agent(container, world_id="w", agent_id="agent-b", name="乙")
+        agents = {"agent-a": a, "agent-b": b}
+        ex = PhysicalExecutor(container.llm_router, _directory(agents), check_assessor=FailedCheckAssessor())
+        env = _make_environment()
+        before = len(provider.call_history)
+        state = await ex.start(self._strike(), 1, agents=agents, environment=env, message_system=None)
+        [result] = await ex.complete(state, 1, agents=agents, environment=env, message_system=None)
+
+        assert result.adjudication_failed is True
+        assert result.check is None
+        assert result.factual_memory == ""
+        assert len(provider.call_history) == before, "评估失败就不该再让裁判落笔"
+
+    @pytest.mark.asyncio
+    async def test_work_writes_the_tier_in_its_own_voice(self, container) -> None:
+        """The actor writes the settled tier in first person, while the assessor got the
+        third-person scene a functional judge reads."""
+        from engine.check import tier_phrase
+
+        provider = container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION)
+        provider.fixed_response = json.dumps({
+            "fact": "我抄完了名册，只是错了两处", "outcome": "甲抄完了名册", "observation": "甲伏案半日",
+        }, ensure_ascii=False)
+        a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
+        agents = {"agent-a": a}
+        checks = fixed_check(record=self._COSTLY)
+        ex = WorkExecutor(container.llm_router, _directory(agents), check_assessor=checks)
+        env = _make_environment()
+        action = _make_action(agent_id="agent-a", action_type=ActionType.WORK, description="抄名册")
+        state = await ex.start(action, 1, agents=agents, environment=env, message_system=None)
+        before = len(provider.call_history)
+        [result] = await ex.complete(state, 1, agents=agents, environment=env, message_system=None)
+
+        assert result.succeeded is True
+        assert result.check == self._COSTLY
+        prompt = _joined(provider.call_history[before])
+        assert tier_phrase(CheckTier.COSTLY_SUCCESS, voice=SituationVoice.FIRST) in prompt
+        assert '"success"' not in prompt
+        [call] = checks.calls
+        assert call["action_type"] is ActionType.WORK
+        assert "由我持有" not in call["scene"]
+
+    @pytest.mark.asyncio
+    async def test_covert_record_rides_out(self, container) -> None:
+        from engine.executors.covert import CovertExecutor
+
+        container.llm_router.get(LLMScene.AGENT_ACTION_NARRATION).fixed_response = (
+            '{"achieved": true, "fact": "我听见了半句"}'
+        )
+        a = _make_agent(container, world_id="w", agent_id="agent-a", name="甲")
+        agents = {"agent-a": a}
+        ex = CovertExecutor(container.llm_router, _directory(agents), check_assessor=fixed_check(record=self._COSTLY))
+        env = _make_environment()  # agent-b watches
+        action = _make_action(agent_id="agent-a", action_type=ActionType.COVERT, description="偷听")
+        state = await ex.start(action, 1, agents=agents, environment=env, message_system=None)
+        [result] = await ex.complete(state, 1, agents=agents, environment=env, message_system=None)
+        assert result.check == self._COSTLY
+        assert result.detected is True
+
+    def test_the_record_reaches_the_observer_read_model(self) -> None:
+        """completion_record → snapshot record → ActionSummary.check, numbers spelled out."""
+        from engine.execution_processor import ExecutionProcessor
+        from engine.message_system import MessageSystem
+        from interaction.models import CheckView, _action_from_record
+        from providers.message.in_memory import InMemoryMessageProvider
+
+        env = _make_environment()
+        processor = ExecutionProcessor(
+            executor_registry=ActionExecutorRegistry(), environment=env,
+            message_system=MessageSystem(InMemoryMessageProvider(), world_id="w"),
+            directory=_directory(),
+        )
+        exec_state = ActionExecutionState.create(
+            target=ActionTarget(), action_type=ActionType.WORK, initiator_id="agent-a",
+            participant_ids=["agent-a"], purpose="抄名册", started_step=1,
+            estimated_steps=1, opening_outcome="",
+        )
+        result = ActionResult(
+            action=_make_action(agent_id="agent-a", action_type=ActionType.WORK, description="抄名册"),
+            expected_outcome="", outcome="甲抄完了名册", check=self._COSTLY,
+        )
+        record = processor.completion_record(exec_state, result, {}, "settled")
+        assert json.loads(json.dumps(record))["check"] == self._COSTLY.to_dict()
+
+        view = _action_from_record(record).check
+        assert view == CheckView(**self._COSTLY.to_dict())
+        assert (view.total, view.dc, view.tier) == (10, 11, "costly_success")
+        assert _action_from_record({**record, "check": None}).check is None
+        assert _action_from_record({**record, "check": {"dice": [9, 9, 9]}}).check is None

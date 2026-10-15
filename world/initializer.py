@@ -31,11 +31,14 @@ from engine.clock import (
 from core.interfaces.directory import WorldDirectory
 from engine.directory import LiveWorldDirectory
 from engine.environment import DEFAULT_MAX_NPCS, IN_TRANSIT, EnvironmentSystem
+from engine.weather import WeatherSystem
 from core.interfaces.world_config import WorldConfig
 from worlds.tiled import CAST_ART_FIELDS, CHARACTERS_FILENAME
 
 from core.coerce import coerce_int
-from world.models import AgentDefinition, AgentTier, HistoricalEventSeed, ThemeAnalysis, World, WorldEntity, WorldEntityType
+from world.models import (
+    AgentDefinition, AgentTier, EntityPresence, HistoricalEventSeed, ThemeAnalysis, World, WorldEntity, WorldEntityType,
+)
 from world.stored_config import StoredWorldConfig, serialize_world_config
 
 logger = get_logger(__name__)
@@ -72,8 +75,12 @@ class WorldInitializer:
         # entity state by reference, and that must never reach the shared template.
         world_config = copy.deepcopy(world_config)
         clock_config = self._clock_config_for(analysis, world_config)
-        environment = EnvironmentSystem(world_config, max_npcs=self._max_npcs)
-        await self._instantiate_entity_seeds(analysis, environment, world_config)
+        weather = WeatherSystem.opening(
+            climate=analysis.climate, seed=world_id,
+            month=WorldTime.from_step(0, clock_config).month_of_year,
+        )
+        environment = EnvironmentSystem(world_config, max_npcs=self._max_npcs, economy=analysis.economy)
+        await self._instantiate_entity_seeds(analysis, environment, world_config, agent_definitions)
         self._instantiate_npc_seeds(analysis, environment, world_config)
         agents: dict[str, Agent] = {}
 
@@ -89,6 +96,8 @@ class WorldInitializer:
             environment.place_agent(agent_id=agent.agent_id,
                 location_id=definition.initial_location,
             )
+            if analysis.economy.has_money:
+                environment.add_money(definition.initial_cash, holder_id=agent.agent_id)
         # Concurrent but fail-fast: collection creation is build-time infrastructure, and any failure
         # makes the world unusable, so raise and let the user retry instead of degrading silently (Rule
         # 2/3). return_exceptions=True only keeps siblings from being cancelled (Rule 4); after
@@ -146,6 +155,7 @@ class WorldInitializer:
             environment=environment,
             directory=directory,
             clock_config=clock_config,
+            weather=weather,
         )
 
         logger.info(
@@ -168,6 +178,7 @@ class WorldInitializer:
             environment=environment,
             step_zero_snapshot=step_zero_snapshot,
             directory=directory,
+            weather=weather,
         )
 
     def _instantiate_agent(
@@ -475,8 +486,10 @@ class WorldInitializer:
             AgentDefinition.from_dict(d) for d in manifest["agent_definitions"]
         ]
 
-        environment = EnvironmentSystem(active_world_config, max_npcs=self._max_npcs)
-        await self._instantiate_entity_seeds(analysis, environment, active_world_config)
+        environment = EnvironmentSystem(
+            active_world_config, max_npcs=self._max_npcs, economy=analysis.economy,
+        )
+        await self._instantiate_entity_seeds(analysis, environment, active_world_config, agent_definitions)
         # Npcs aren't rebuilt here, deliberately unlike entity seeds: the npc_states payload is
         # self-contained (identity + position + condition + current errand) and _restore_environment_state
         # loads it in one go. Building them on both paths would collide on ids, and since ids are slugs of
@@ -517,6 +530,11 @@ class WorldInitializer:
                 await agent.memory_system.warm_recent_memories(current_step=0)
 
         await self._restore_environment_state(world_id, environment, resume_step)
+        resume_snapshot = await self._container.snapshot.load(world_id, resume_step)
+        weather = WeatherSystem.restore(
+            resume_snapshot.metadata.get("weather") if resume_snapshot is not None else None,
+            seed=world_id, climate=analysis.climate,
+        )
         self._repatriate_transit_agents(agents, agent_definitions, environment)
         directory = LiveWorldDirectory.from_agents(agents, environment)
 
@@ -540,6 +558,7 @@ class WorldInitializer:
             step_zero_snapshot=step_zero,
             directory=directory,
             current_step=resume_step,
+            weather=weather,
         )
 
     def _repatriate_transit_agents(
@@ -696,6 +715,7 @@ class WorldInitializer:
         environment: EnvironmentSystem,
         directory: WorldDirectory,
         clock_config: WorldTimeConfig,
+        weather: WeatherSystem,
     ) -> WorldSnapshot:
         world_time = WorldTime.from_step(0, clock_config)
         # Mirror the runtime's observation enrichment: snapshot_agent_state is id-only
@@ -727,6 +747,7 @@ class WorldInitializer:
                 },
                 "world_time": world_time.iso_label(),
                 "time_label": world_time.time_label,
+                "weather": weather.snapshot(),
                 "world": {
                     "world_name": analysis.world_name,
                     # Step duration: the review card shows it to the user before confirmation locks it in (once
@@ -768,6 +789,7 @@ class WorldInitializer:
                         "self_image": agent.personality.soul.self_image,
                         "life_goal": agent.personality.soul.life_goal,
                         "secret": agent.personality.soul.secret,
+                        "abilities": agent.personality.soul.abilities.to_dict(),
                         "is_main_character": agent.is_main_character,
                     }
                     for agent_id, agent in agents.items()
@@ -811,29 +833,44 @@ class WorldInitializer:
             environment.spawn_npc(seed, location_id=location_id)
 
     async def _instantiate_entity_seeds(
-        self, analysis: ThemeAnalysis, environment: EnvironmentSystem, world_config: WorldConfig
+        self,
+        analysis: ThemeAnalysis,
+        environment: EnvironmentSystem,
+        world_config: WorldConfig,
+        agent_definitions: Sequence[AgentDefinition],
     ) -> None:
+        """Seeds a character carries start in his hands; the rest lie where the analysis put them.
+
+        A restored world rebuilds the step-0 layout here and then loads where each thing is now
+        from its snapshot.
+        """
         location_ids = sorted(world_config.get_places())
         default_location = location_ids[0] if location_ids else None
+        holders = {seed_id: d.agent_id for d in agent_definitions for seed_id in d.carried}
 
         for seed in analysis.world_entity_seeds:
-            location_id = world_config.resolve_location_id(seed.location_name)
-            if location_id is None:
-                location_id = default_location
-                logger.warning(
-                    "entity_seed_location_unresolvable",
-                    extra={
-                        "seed_name": seed.name,
-                        "requested": seed.location_name,
-                        "fallback": location_id,
-                    },
-                )
-            if location_id is None:
-                logger.warning(
-                    "entity_seed_skipped_no_location",
-                    extra={"seed_name": seed.name},
-                )
-                continue
+            holder_id = holders.get(seed.entity_id) if seed.is_takeable else None
+            if holder_id is not None:
+                presence, presence_ref = EntityPresence.HELD, holder_id
+            else:
+                location_id = world_config.resolve_location_id(seed.location_name)
+                if location_id is None:
+                    location_id = default_location
+                    logger.warning(
+                        "entity_seed_location_unresolvable",
+                        extra={
+                            "seed_name": seed.name,
+                            "requested": seed.location_name,
+                            "fallback": location_id,
+                        },
+                    )
+                if location_id is None:
+                    logger.warning(
+                        "entity_seed_skipped_no_location",
+                        extra={"seed_name": seed.name},
+                    )
+                    continue
+                presence, presence_ref = EntityPresence.AT_LOCATION, location_id
             entity_id = seed.entity_id
             entity = WorldEntity(
                 entity_id=entity_id,
@@ -841,7 +878,8 @@ class WorldInitializer:
                 entity_type=WorldEntityType(seed.entity_type),
                 state=seed.initial_state,
                 description=seed.description,
-                presence_ref=location_id,   # presence defaults to AT_LOCATION
+                presence=presence,
+                presence_ref=presence_ref,
                 is_takeable=seed.is_takeable,
                 is_public=True,
                 content=seed.content,
@@ -853,7 +891,8 @@ class WorldInitializer:
                     "entity_id": entity_id,
                     "seed_name": seed.name,
                     "entity_type": seed.entity_type,
-                    "location_id": location_id,
+                    "presence": presence.value,
+                    "presence_ref": presence_ref,
                 },
             )
 

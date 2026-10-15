@@ -10,12 +10,13 @@ from enum import Enum
 from typing import Any, Iterable, List
 
 from core.coerce import coerce_enum
+from core.interfaces.check import CheckRecord
 from core.interfaces.condition import BodyCondition
 from core.interfaces.urgency import Urgency
 
 
 # What a ``Ref`` may point at. ``AGENT`` and ``LOCATION`` are the world's two structural
-# kinds; the rest are entities — ``ITEM``/``LANDMARK`` come from the environment's own
+# kinds; the rest are entities — ``ITEM``/``LANDMARK``/``MONEY`` come from the environment's own
 # ``entity_type`` (its table is the only authority on which a listed entity is), and
 # ``OBJECT`` is an off-roster one a decision named in free text ("the ground").
 KIND_AGENT = "agent"
@@ -26,6 +27,7 @@ KIND_LOCATION = "location"
 KIND_NPC = "npc"
 KIND_ITEM = "item"
 KIND_LANDMARK = "landmark"
+KIND_MONEY = "money"
 # A source marker, not an ontology class: only the free-text branch of ``_bind_physical`` sets it.
 # ``Ref.id`` then holds the original phrase, not an id: the judge must read that phrase. Looking it
 # up in the directory always misses and falls back to "某物", discarding the only information.
@@ -167,6 +169,8 @@ class ActionType(str, Enum):
                      Unlike MOVE (only your own body), SEND_MESSAGE (words one way, no return,
                      no objects) and PHYSICAL (force here and now). The cost is travel time,
                      being seen, and the chance it isn't done.
+    - TRADE        — an agreed exchange that moves things both ways at once, or not at all.
+                     TALK moves no objects; PHYSICAL's handover goes one way on one side's say.
     """
 
     TALK = "talk"
@@ -177,6 +181,7 @@ class ActionType(str, Enum):
     PHYSICAL = "physical"
     COVERT = "covert"
     ERRAND = "errand"
+    TRADE = "trade"
 
 
 class Deed(str, Enum):
@@ -208,6 +213,7 @@ class Deed(str, Enum):
     REST         = "rest"
     COVERT       = "covert"
     ERRAND       = "errand"
+    TRADE        = "trade"
 
 
 #: Action types whose hidden layer a covert action can uncover at most; an allowlist, so a new
@@ -218,6 +224,7 @@ COVERTABLE_ACTION_TYPES: "frozenset[ActionType]" = frozenset({
     ActionType.TALK,     # dialogue transcript (onlookers only see that two people talked)
     ActionType.WORK,     # the work product (onlookers only see him busy at his desk)
     ActionType.ERRAND,   # what the errand was (onlookers only see him stop someone for a word)
+    ActionType.TRADE,    # the haggling and the terms (onlookers only see what changed hands)
 })
 
 
@@ -339,8 +346,37 @@ class EntityStateChange:
     owner_id:         str | None = None   # set → the entity's NEW HOLDER (presence → HELD): the actor when seized, the recipient when handed over; gated on is_takeable
     location_id:      str | None = None   # set → drop/move semantics (presence → AT_LOCATION)
     destroyed:        bool = False        # set → removal (presence → DESTROYED, terminal); wins over owner/location
+    # Money only: move just this much of the pile; None moves all of it. Ignored for anything else.
+    quantity:         int | None = None
     perception:       str = ""            # perception text broadcast to observers; empty → no perception triggered
     perception_scope: str | None = None   # None → use actor's current location
+
+
+@dataclass(frozen=True)
+class Transfer:
+    """One thing changing hands in an exchange that lands whole or not at all (TRADE).
+
+    ``from_id`` is who must still hold it when the exchange lands: if anything moved in the
+    meantime, nothing changes hands. An empty ``entity_id`` is ``quantity`` of money out of the
+    giver's purse, whichever pile that is by then (piles merge and split).
+    """
+
+    from_id: str
+    to_id: str
+    entity_id: str = ""
+    quantity: int | None = None
+
+
+@dataclass(frozen=True)
+class TradeTerms:
+    """What the trader offers and asks for. Either side may be empty, not both; an amount is
+    meaningful only for money."""
+
+    counterpart_id: str
+    give_entity_id: str = ""
+    give_amount: int = 0
+    ask_entity_id: str = ""
+    ask_amount: int = 0
 
 
 @dataclass
@@ -431,6 +467,8 @@ class ErrandOrder:
     item_id: str = ""
     recipient_id: str = ""
     message: str = ""
+    # Money only: how much of the purse the runner carries; 0 for anything else.
+    amount: int = 0
 
 
 def errand_to_dict(order: "ErrandOrder | None") -> dict[str, object] | None:
@@ -452,9 +490,14 @@ def errand_from_dict(payload: object) -> "ErrandOrder | None":
     if not payload.get("npc_id") or not payload.get("destination_id"):
         return None
     known = {f.name for f in dataclass_fields(ErrandOrder)}
-    return ErrandOrder(**{
-        k: ("" if v is None else str(v)) for k, v in payload.items() if k in known
-    })
+    fields: dict[str, Any] = {
+        k: ("" if v is None else str(v)) for k, v in payload.items() if k in known and k != "amount"
+    }
+    try:
+        fields["amount"] = max(0, int(payload.get("amount") or 0))
+    except (TypeError, ValueError):
+        fields["amount"] = 0
+    return ErrandOrder(**fields)
 
 
 @dataclass
@@ -502,6 +545,9 @@ class ActionResult:
     - ``entity_spawns``: ``name``/``description`` are the item's narrative reference;
       ``perception`` is onlooker text. ``is_public`` decides who can reach it from now on,
       ``perception`` who sees it appear; a private item sets neither.
+    - ``check``: not text but the roll behind the result, code layer only (see
+      ``core.interfaces.check``). The god-view record and the renderer read it; nothing feeds it
+      back into a prompt or a memory.
 
     TALK is the model case: ``outcome`` = the named transcript; ``observations`` = "A and B
     talked and parted on bad terms"; ``factual_memory`` = each participant's own summary.
@@ -543,6 +589,9 @@ class ActionResult:
     entity_state_changes: list[EntityStateChange] = field(default_factory=list)
     # See EntitySpawn. Applied via ``EnvironmentSystem.spawn_entity`` in the feedback layer.
     entity_spawns: list[EntitySpawn] = field(default_factory=list)
+    # An exchange that lands whole or not at all (TRADE); see Transfer. On one participant's
+    # result only, or it would land twice.
+    transfers: list[Transfer] = field(default_factory=list)
     # A receipt, not a command: ``ErrandExecutor.start`` already landed the errand. Don't land it
     # again: checking the body is free and occupying it must be one operation. Empty never means
     # the Npc refused (it has no will); only rules reject an errand.
@@ -556,6 +605,9 @@ class ActionResult:
     # a null step with no writeback (Rule 1 tier 1). A genuine in-world failure leaves this False
     # and IS remembered. Never set on a fabricated/“successful” result.
     adjudication_failed: bool = False
+    # The roll this result was narrated from; None when nothing was rolled (no doubt, or a type
+    # that never rolls). See the class docstring.
+    check: "CheckRecord | None" = None
     # True when a precondition was unmet (target absent or busy, no path, prerequisite missing);
     # set by ActionExecutionState.create_failed, always with succeeded=False. Unlike
     # adjudication_failed it IS remembered: a foiled plan is a real experience. It only lets

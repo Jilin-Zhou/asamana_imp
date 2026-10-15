@@ -13,7 +13,7 @@ from core.container import Container
 from core.context import clear_log_context, set_log_context
 from core.logging import get_logger
 from core.interfaces.action import (
-    ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref,
+    KIND_MONEY, ErrandOrder, ActionResult, ActionTarget, ActionType, AgentAction, Ref, TradeTerms,
 )
 from core.prompts import render_condition
 from engine.executors import build_default_registry
@@ -30,7 +30,9 @@ from tuning.trace import InMemoryTraceSink, PhaseTrace
 logger = get_logger(__name__)
 
 
-_INTERACTIVE_TYPES = {ActionType.TALK, ActionType.SEND_MESSAGE, ActionType.COVERT}
+_INTERACTIVE_TYPES = {ActionType.TALK, ActionType.SEND_MESSAGE, ActionType.COVERT, ActionType.TRADE}
+# The types that take the other party's turn (arbitration absorbs it as INVITE).
+_CLAIMING_TYPES = {ActionType.TALK, ActionType.TRADE}
 
 
 def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, Any]:
@@ -41,10 +43,13 @@ def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, A
         # Some checks branch on type (e.g. "accepted or not" only applies to errands); without it they'd have to guess.
         "action_type": getattr(r.action.action_type, "value", str(r.action.action_type)),
         "outcome": r.outcome,
-        "observation": r.observation,
+        # Every place's onlooker text, joined: the validators scan it as one string.
+        "observation": "\n".join(o.text for o in r.observations),
         "succeeded": r.succeeded,
         "failure_reason": r.failure_reason,
         "detected": r.detected,
+        # The roll behind ``succeeded``; code layer, shown to the reviewer, never to an agent.
+        "check": r.check.to_dict() if r.check is not None else None,
         "factual_memory": r.factual_memory,
         "dialogue": list(r.dialogue),
         "vitality_damage": r.vitality_damage,
@@ -70,8 +75,14 @@ def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, A
         ],
         "entity_state_changes": [
             {"entity_id": c.entity_id, "new_state": c.new_state, "owner_id": c.owner_id,
-             "location_id": c.location_id, "perception": c.perception}
+             "location_id": c.location_id, "quantity": c.quantity, "perception": c.perception}
             for c in r.entity_state_changes
+        ],
+        # An exchange's moves (TRADE): ids are code-layer, names resolved for the judge.
+        "transfers": [
+            {"from": nm.get(t.from_id, t.from_id), "to": nm.get(t.to_id, t.to_id),
+             "entity_id": t.entity_id, "quantity": t.quantity}
+            for t in r.transfers
         ],
         # Made things: their name / description go into other agents' reachable lists and get embedded,
         # so for the same reason they must be included; otherwise they skip the judge and the id/step leak scan.
@@ -122,9 +133,9 @@ def _build_agent_action(
     if atype in _INTERACTIVE_TYPES:
         if tgt:
             other = Ref.agent(resolve_ref(tgt, id_by_name, valid_ids))
-            # A conversation also takes the other party's turn (arbitration absorbs it as INVITE); messages and covert actions don't occupy anyone else's body.
+            # A conversation or a trade also takes the other party's turn (arbitration absorbs it as INVITE); messages and covert actions don't occupy anyone else's body.
             target = ActionTarget(
-                acts_on=[other], claims=[other] if atype is ActionType.TALK else [],
+                acts_on=[other], claims=[other] if atype in _CLAIMING_TYPES else [],
             )
     elif atype == ActionType.MOVE:
         if str(tgt or "") == "$ADJACENT":
@@ -142,6 +153,10 @@ def _build_agent_action(
         else:
             # recipient: who receives a delivery (only meaningful on the entity channel); pairs with the scenario's holder.
             rcpt = spec.get("recipient")
+            if it == KIND_MONEY:
+                # target names whose purse it is.
+                purse = env.purse_of(resolve_ref(str(tgt or ""), id_by_name, valid_ids))
+                tgt = purse.entity_id if purse is not None else ""
             target = ActionTarget(
                 acts_on=[Ref.entity(str(tgt or ""), it)],
                 reaches=(
@@ -149,6 +164,22 @@ def _build_agent_action(
                 ),
             )
     intent = None
+    if atype == ActionType.PHYSICAL and spec.get("amount"):
+        intent = ActionIntent(purpose=spec.get("description", ""), amount=int(spec["amount"]))
+    if atype == ActionType.TRADE and target.acts_on:
+        # give / ask name things the scene registered; money goes by amount.
+        def thing(name: object) -> str:
+            found = env.find_item(str(name)) if name else None
+            return found.entity_id if found is not None else ""
+
+        intent = ActionIntent(
+            purpose=spec.get("description", ""),
+            trade=TradeTerms(
+                counterpart_id=target.acts_on[0].id,
+                give_entity_id=thing(spec.get("give")), give_amount=int(spec.get("give_money", 0)),
+                ask_entity_id=thing(spec.get("ask")), ask_amount=int(spec.get("ask_money", 0)),
+            ),
+        )
     if atype == ActionType.ERRAND:
         # The person given the errand only goes into acts_on: in claims, arbitration would reject the whole action as "no response".
         bearer = next(
@@ -182,7 +213,7 @@ def _build_agent_action(
 def _feasibility_view(action: AgentAction, env) -> dict[str, Any]:
     """Pre-action: run the type's feasibility check (where applicable)."""
     at = action.action_type
-    if at == ActionType.TALK:
+    if at in _CLAIMING_TYPES:
         r = env.check_talk_feasibility(action.agent_id, action.target.acted_on_agents)
     elif at == ActionType.MOVE:
         r = env.check_move_feasibility(action.agent_id, action.target.acted_on_place)
@@ -388,7 +419,9 @@ async def run_action(
     name_by_id = world.directory.all_agent_names()
     id_by_name = {v: k for k, v in name_by_id.items()}
     registry = build_default_registry(
-        traced_container.llm_router, world.directory, seconds_per_step=world.clock_config.seconds_per_step)
+        traced_container.llm_router, world.directory,
+        seconds_per_step=world.clock_config.seconds_per_step, check_seed=world_id,
+        economy=world.environment.economy)
     message_system = MessageSystem(traced_container.message_provider, world_id=world_id)
 
     await apply_action_scene(scenario or {}, world, run_step, id_by_name)

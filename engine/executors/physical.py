@@ -15,7 +15,9 @@ from core.interfaces.action import (
     KIND_OBJECT, ActionResult, ActionType, AgentAction, Deed, EntityStateChange,
     NpcEffect, TargetAgentEffect, parse_deed,
 )
+from core.interfaces.check import CheckTier
 from core.interfaces.directory import WorldDirectory
+from core.interfaces.economy import Economy
 from core.coerce import coerce_float, coerce_int, coerce_str
 from core.interfaces.llm import LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget
 from core.interfaces.trace import Stage
@@ -42,6 +44,7 @@ from engine.executors.base import (
     ActionExecutionState,
     ActionExecutor,
 )
+from engine.check import CheckAssessor, tier_phrase
 from engine.environment import SALIENT_AMBIENT_STRENGTH
 from engine.narration import SAME_PLACE_VERDICT_RULE, ensure_actor_named, observed_here, scene_line
 from engine.scene import (
@@ -211,7 +214,11 @@ class _Subject:
 
 @dataclass(frozen=True)
 class _Verdict:
-    """World facts adjudicated by the functional judge (single source of truth)."""
+    """World facts adjudicated by the functional judge (single source of truth).
+
+    ``success`` is the check's tier read as a boolean, never the judge's own call: the judge
+    narrates a result it is handed.
+    """
 
     success: bool
     # outcome: third person, names actor + target, full authority. Physical acts are fully
@@ -238,14 +245,18 @@ class _Verdict:
     actor_condition_desc: str = ""
     actor_condition_steps: int = 0
     frees_actor: bool = False          # lifted the actor's existing condition (broke free / let go)
+    # Money only: how much actually changed hands (clamped by code to what was at stake).
+    amount_moved: int | None = None
 
 
 class PhysicalExecutor(ActionExecutor):
-    """Executor for PHYSICAL actions: a two-stage pipeline in complete() (born-zero).
+    """Executor for PHYSICAL actions: a three-stage pipeline in complete() (born-zero).
 
-    1. ``_judge`` (functional referee) adjudicates world facts: success, damage, entity state.
-       The actor's personality is evidence, not the viewpoint.
-    2. ``_llm_target_reaction`` (in-character) writes the counterpart's subjective experience
+    1. ``CheckAssessor`` decides whether the act is in doubt and, if so, rolls for it
+       (``core.interfaces.check``): the tier is settled before anyone writes a word.
+    2. ``_judge`` (functional referee) writes the world facts of that tier: what happened,
+       damage, conditions, entity state. The actor's personality is evidence, not the viewpoint.
+    3. ``_llm_target_reaction`` (in-character) writes the counterpart's subjective experience
        from the judged facts; it never decides physical facts.
 
     Routing follows ``ActionTarget.acted_on_kind`` (from the decision slot, never an LLM): a
@@ -258,10 +269,12 @@ class PhysicalExecutor(ActionExecutor):
         llm_router: LLMRouter,
         directory: WorldDirectory,
         *,
+        check_assessor: CheckAssessor,
         seconds_per_step: int = 3600,
     ) -> None:
         self._llm = llm_router
         self._directory = directory
+        self._checks = check_assessor
         # Only for conditions: durations down to the judge, and the step unit taught up so it can
         # answer in steps.
         self._seconds_per_step = seconds_per_step
@@ -339,6 +352,9 @@ class PhysicalExecutor(ActionExecutor):
         state.extra["resolved_id"] = feasibility.resolved_id or target_id
         if recipient_id:
             state.extra["recipient_id"] = recipient_id
+        amount = getattr(action.intent, "amount", None)
+        if amount:
+            state.extra["amount"] = amount
         return state
 
     async def _resolve_subject(
@@ -418,6 +434,8 @@ class PhysicalExecutor(ActionExecutor):
         if item is None or not verdict.success:
             return []
         actor_name = self._directory.agent_name(subject.actor_id)
+        # Onlookers see money change hands, not how much.
+        seen = f"一些{item.name}" if item.is_money else item.name
         if verdict.deed == Deed.DESTROY:
             return [EntityStateChange(
                 entity_id=item.entity_id,
@@ -429,7 +447,8 @@ class PhysicalExecutor(ActionExecutor):
             return [EntityStateChange(
                 entity_id=item.entity_id,
                 owner_id=subject.actor_id,
-                perception=scene_line(location, f"{actor_name}拿起了{item.name}。"),
+                quantity=verdict.amount_moved,
+                perception=scene_line(location, f"{actor_name}拿起了{seen}。"),
             )]
         if verdict.deed == Deed.RELINQUISH:
             recipient_id = subject.recipient_id
@@ -437,9 +456,10 @@ class PhysicalExecutor(ActionExecutor):
                 entity_id=item.entity_id,
                 owner_id=recipient_id or None,
                 location_id=None if recipient_id else environment.get_body_location(subject.actor_id),
+                quantity=verdict.amount_moved,
                 perception=scene_line(location, (
-                    f"{actor_name}把{item.name}交到了{self._directory.agent_name(recipient_id)}手上。"
-                    if recipient_id else f"{actor_name}放下了{item.name}。"
+                    f"{actor_name}把{seen}交到了{self._directory.agent_name(recipient_id)}手上。"
+                    if recipient_id else f"{actor_name}放下了{seen}。"
                 )),
             )]
         return [EntityStateChange(
@@ -481,9 +501,29 @@ class PhysicalExecutor(ActionExecutor):
             return None, None
         return candidate, other
 
+    @staticmethod
+    def _opponent(
+        subject: "_Subject", *, agents: dict[str, "Agent"], environment: "EnvironmentSystem",
+    ) -> "Agent | None":
+        """Who can resist the act: the person it lands on, or whoever is holding the thing it
+        takes. Not a handover's recipient: taking it or not is his choice, not a contest."""
+        if subject.is_person:
+            return subject.target_agent
+        holder = subject.prior_owner_id
+        if holder is None or subject.actor_holds:
+            return None
+        other = agents.get(holder)
+        if (
+            other is None
+            or not other.is_active
+            or environment.get_body_location(holder) != environment.get_body_location(subject.actor_id)
+        ):
+            return None
+        return other
+
     async def _counterpart_effect(
         self, verdict: "_Verdict", subject: "_Subject", counterpart: "Agent", *,
-        step: int,
+        step: int, economy: Economy,
     ) -> TargetAgentEffect:
         """The counterpart's effect: experience from the reaction stage, harm from the judge."""
         actor_name = self._directory.agent_name(subject.actor_id)
@@ -496,8 +536,13 @@ class PhysicalExecutor(ActionExecutor):
             else _POSSESSION_EVENT_LINES.get(verdict.deed, "")
         )
         if template and subject.item is not None:
+            # Whoever lost or received money knows how much.
+            item_name = (
+                economy.amount_text(verdict.amount_moved)
+                if subject.item.is_money and verdict.amount_moved else subject.item.name
+            )
             event_line = (
-                f"{template.format(actor=actor_name, item=subject.item.name)}"
+                f"{template.format(actor=actor_name, item=item_name)}"
                 f"，结果：{'做成了' if verdict.success else '没能做成'}"
             )
         effect = await self._llm_target_reaction(
@@ -559,27 +604,49 @@ class PhysicalExecutor(ActionExecutor):
         subject = await self._resolve_subject(
             state, agents=agents, environment=environment, step=step,
         )
+        scene = assemble_scene_context(
+            agent_id, environment=environment, directory=self._directory,
+            agents=agents, with_background=True, visibility=SceneVisibility.GOD,  # functional judge
+        ).text
+        recipient_line = self._recipient_line(subject.recipient_id, subject.recipient_agent)
+        # Money: how much is at stake, at most the pile. Named in the act for the assessor and judge.
+        stake = 0
+        if subject.item is not None and subject.item.is_money:
+            stake = min(int(state.extra.get("amount") or subject.item.quantity), subject.item.quantity)
+            recipient_line += f"\n- 涉及钱数：{environment.economy.amount_text(stake)}"
 
-        verdict = await self._judge(
-            agent,
-            description=description,
-            expected_outcome=state.expected_outcome,
-            scene=assemble_scene_context(
-                agent_id, environment=environment, directory=self._directory,
-                agents=agents, with_background=True, visibility=SceneVisibility.GOD,  # functional judge
-            ).text,
-            target_block=subject.target_block,
-            is_person=subject.is_person,
-            has_entity=subject.item is not None,
-            seize_available=subject.seize_available,
-            actor_holds=subject.actor_holds,
-            needs_relation=subject.needs_relation,
-            recipient_line=self._recipient_line(subject.recipient_id, subject.recipient_agent),
-            step=step,
+        check = (
+            await self._checks.assess(
+                agent, action_type=ActionType.PHYSICAL, intent=description, scene=scene,
+                step=step, expected_outcome=state.expected_outcome,
+                target_block=subject.target_block, details=recipient_line,
+                opponent=self._opponent(subject, agents=agents, environment=environment),
+            )
+            if agent is not None else None
+        )
+        verdict = (
+            await self._judge(
+                agent,
+                tier=check.tier,
+                description=description,
+                expected_outcome=state.expected_outcome,
+                scene=scene,
+                target_block=subject.target_block,
+                is_person=subject.is_person,
+                has_entity=subject.item is not None,
+                seize_available=subject.seize_available,
+                actor_holds=subject.actor_holds,
+                needs_relation=subject.needs_relation,
+                recipient_line=recipient_line,
+                step=step,
+                stake=stake,
+            )
+            if check is not None else None
         )
 
-        # No adjudication: null step, nothing fabricated (Rule 1).
-        if verdict is None:
+        # No adjudication: null step, nothing fabricated (Rule 1). A roll whose narration failed
+        # is discarded with it.
+        if check is None or verdict is None:
             return [self._adjudication_failed_result(target, state.expected_outcome, step, agent_id, description, location)]
 
         # Both read verdict.deed only, so the world change and the affected person can't disagree.
@@ -599,7 +666,7 @@ class PhysicalExecutor(ActionExecutor):
         target_effects: list[TargetAgentEffect] = []
         if counterpart_agent is not None:
             target_effects.append(await self._counterpart_effect(
-                verdict, subject, counterpart_agent, step=step,
+                verdict, subject, counterpart_agent, step=step, economy=environment.economy,
             ))
 
         # An Npc takes only a condition; harm, emotion and relation have nowhere to go. Its
@@ -667,6 +734,7 @@ class PhysicalExecutor(ActionExecutor):
             actor_condition_cleared=(actor_condition_set is None and verdict.frees_actor),
             entity_state_changes=entity_state_changes,
             deed=verdict.deed.value,  # what he was seen doing — carried even when he failed
+            check=check.record,
         )]
 
     async def tick(
@@ -764,6 +832,7 @@ class PhysicalExecutor(ActionExecutor):
         self,
         agent: "Agent | None",
         *,
+        tier: CheckTier,
         description: str,
         expected_outcome: str,
         scene: str,
@@ -775,14 +844,22 @@ class PhysicalExecutor(ActionExecutor):
         needs_relation: bool,
         recipient_line: str,
         step: int,
+        stake: int = 0,
     ) -> "_Verdict | None":
-        """Neutral third-party adjudication of world facts. Returns ``None`` when adjudication
-        can't happen (LLM failure, missing actor), so the caller fabricates nothing."""
+        """Neutral third-party adjudication of the world facts of a settled ``tier``. Returns
+        ``None`` when adjudication can't happen (LLM failure, missing actor), so the caller
+        fabricates nothing."""
         if agent is None:
             logger.warning("physical_judge_no_actor", extra={"description": description})
             return None
 
         expected_part = f"\n- 期望结果：{expected_outcome}" if expected_outcome else ""
+        # Read beside the tier, where "better than he wanted" would otherwise mean more money than
+        # there was at stake; the code caps the sum anyway, so the prose must not exceed it.
+        stake_note = (
+            "\n（钱数以【行动】里的涉及钱数为上限：做得再好也不会多出钱来，好处要写在别处，"
+            "如手脚干净、无人察觉、顺带看清了什么。旁人看不出数目：outcome 不写钱数，fact 写清。）" if stake else ""
+        )
         # Evidence for the escape hatch: whether a bound man struggling gets free.
         actor_condition_line = condition_line(
             agent.personality.state.condition, voice=SituationVoice.THIRD,
@@ -871,6 +948,12 @@ class PhysicalExecutor(ActionExecutor):
                 '不写它在谁手上、在哪儿（那不是状态），也不写另一样东西的状态；'
                 '这件东西若被彻底毁掉，那由 deed 答 destroy，这里不写",'
             )
+        if stake:
+            entity_fields += (
+                ' "amount_moved": 这一动实际经手的钱数（整数，不超过【行动】里写的涉及钱数；'
+                '有代价的成功可以只到手一部分；没做成填 0）。fact 里写到的钱数必须就是它；'
+                'outcome 是旁人眼里的样子，只写钱换了手、不写数目；大成功的好处不在多拿钱，而在手脚干净、没人察觉之类,'
+            )
 
         # deed is the act, answered regardless of success; candidates narrow by target shape.
         if is_person:
@@ -894,14 +977,15 @@ class PhysicalExecutor(ActionExecutor):
         # still share a cacheable system prefix.
         system = f"""\
 【裁决任务】
-你是中立的世界裁决者。根据下方材料客观裁定一次物理行动的结果：是否成功、造成了什么后果。
+你是中立的世界裁决者。一次物理行动的成败**已经定下**（见下方【已定结果】，不由你裁定）。
+你要根据下方材料，客观写出它**具体是怎么发生的、造成了什么后果**：经过、损耗、处境与物件的变化。
 
 【裁决原则】
-- 不得因行动者身份强势或性格果决就一律判成功；双方实力、体力、现场条件都必须计入。
+- 【已定结果】是既成事实：照它写，不得改判，也不得含糊——定为做成就写做成了，定为没做成就写没做成。
 - 在场旁人是裁决证据：结合各自的背景/性情，权衡他们对此事的立场（会阻拦、会协助、还是袖手旁观），
-  据此影响成败与代价——但有人在场不机械地等于失败。
+  据此写出事情具体怎么发生、代价落在谁身上。
 - 在场者标注的「此刻意图」是他们此刻**同时**在试图做的事、结果**尚未落定**（引号内是各人自己的说法）：
-  据此权衡他们会不会以及如何影响这次行动（介入、协助、妨碍、分神、自顾不暇等），从而左右成败与代价——
+  据此权衡他们会不会以及如何影响这次行动的经过与代价（介入、协助、妨碍、分神、自顾不暇等）——
   但**不要**把某人尚未落定的意图当成已经发生的事实去叙述（「意图介入」不等于「已经发生」）。
 - 对人的物理行动**未必是攻击**(也可能是搀扶/救治/递物/制止等有益或中性之举,见意图)：
   没有耗损的行动 target_damage 应为 0，切勿见「物理行动」就判出损耗。
@@ -913,23 +997,23 @@ class PhysicalExecutor(ActionExecutor):
 - 对于行动动作是否成功和行动结果的客观事实一定要分开判断，动作成功并不代表客观事实一定成立，比如行动者想看清某物是不是一封信，「看」这个动作本身可能成功了，但那物到底是不是信，得结合现场情况综合判定。
 - 物件上写着、记着什么，你并不知道，材料里也没有给出：行动者要读、要看其中写了什么时，东西不在他手上就读不到；
   不论成败，都**不得**替他写出读到了什么，也不得从物件的描述里推想出它的内容。
-- 如果【目标】与【行动】意图存在明显的冲突，可以先思考冲突的原因，如果没有得到解释理由，可以直接判定行动失败。
-- 若行动者要把手中之物交到某人手上，对方接不接是他自己的事：可能接过、可能推拒、可能被旁人截下。据双方关系、性情与现场权衡，不得默认必然交到。
-- 若他要拿的东西标着「由某人持有」，那就是从那人手上、身上拿，不是捡起一件无主之物：那人此刻醒着还是睡着、留不留神、护不护得住，连同双方实力与旁人立场，都要计入成败与代价。东西此刻在谁手上以「由某人持有」为准，物件描述里写的所在可能只是它原先的位置。{possession_rule}
+- 若行动者要把手中之物交到某人手上：定为做成，就是对方接过了；定为没做成，可能是对方推拒、也可能被旁人截下——据双方关系、性情与现场写出是哪一种。
+- 若他要拿的东西标着「由某人持有」，那就是从那人手上、身上拿，不是捡起一件无主之物：据那人此刻醒着还是睡着、留不留神、护不护得住，连同双方实力与旁人立场，写出经过与代价。东西此刻在谁手上以「由某人持有」为准，物件描述里写的所在可能只是它原先的位置。{possession_rule}
 {SAME_PLACE_VERDICT_RULE}
 {IDLE_BYSTANDER_VERDICT_RULE}
 {CLOSED_WORLD_FACT_RULE}
 
 【输出】
 {VITALITY_DAMAGE_DEFINITION}{relief_definition}
-严格输出以下 JSON，不要任何多余内容。**先在 reason 里简述裁断依据**(权衡了双方哪些实力/伤势/现场条件、为何如此判),再据此给出结论字段——先想清楚再下判，不要凭空给数字。
+严格输出以下 JSON，不要任何多余内容。**先在 reason 里简述这一结果是如何落到实处的**(双方哪些实力/伤势/现场条件起了作用、代价落在哪里),再据此给出各字段——先想清楚再写，不要凭空给数字。
 - outcome：**第三人称、点名行动者与目标**、客观描述实际发生与结果（发生了什么？结果是什么？旁观者会看到的，内容具体清晰，简洁明了，不超过40字）。
 - fact：**第一人称（行动者「我」视角）**一句话描述客观描述实际发生与结果（发生了什么？结果是什么？行动者自己会记住的，内容具体清晰，简洁明了，不超过60字）。
 - outcome 与 fact 都**只写「谁做了什么、结果如何」，不要带时间或地点前缀**（如「在书房，…」）——地点由系统统一标注，你再写一遍会重复。
+- 【已定结果】要你写出的代价、好处或糟处，**必须具体写进 outcome 与 fact**（是什么、落在谁身上），只在 reason 里提不算。
 - damage 字段的值一定要于fact, outcome自洽合理，比如如果fact, outcome中说目标已经没有生命力了，那target_damage就应该是1。
 - deed：行动者**在做的动作本身**，与成败无关——就算没做成，他做的仍是那个动作。
-- why：**仅当 success 为 false**时给出没成的缘由，第三人称、≤20字、只写外部可陈述的（如对方早有防备、那东西比看上去沉得多），不写行动者的心绪或懊丧；success 为 true 时给空字符串。
-{target_condition_doc}{actor_condition_doc}{{"reason": "一两句裁断依据（≤100字）",{deed_field} "success": true或false, "outcome": "第三人称、点名行动者与目标、客观描述实际发生（≤40字）", "fact": "第一人称、行动者「我」视角描述客观描述实际发生与结果（≤60字）", "why": "没成的缘由（≤20字）；成了给空字符串",{relation_field}{person_fields}{entity_fields} "actor_damage": 行动者自身的损耗，按上方 damage 刻度{target_condition_fields}{actor_condition_fields}}}
+- why：**仅当【已定结果】是没做成**时给出没成的缘由，第三人称、≤20字、只写外部可陈述的（如对方早有防备、那东西比看上去沉得多），不写行动者的心绪或懊丧；做成了给空字符串。
+{target_condition_doc}{actor_condition_doc}{{"reason": "一两句：结果如何落到实处（≤100字）",{deed_field} "outcome": "第三人称、点名行动者与目标、客观描述实际发生（≤40字）", "fact": "第一人称、行动者「我」视角描述客观描述实际发生与结果（≤60字）", "why": "没成的缘由（≤20字）；成了给空字符串",{relation_field}{person_fields}{entity_fields} "actor_damage": 行动者自身的损耗，按上方 damage 刻度{target_condition_fields}{actor_condition_fields}}}
 """
         user = f"""\
 【行动者】（裁决输入：性格与状态影响行动水准，但你不站在他的立场）
@@ -945,6 +1029,9 @@ class PhysicalExecutor(ActionExecutor):
 【行动】
 - 意图：{description}{expected_part}{recipient_line}
 
+【已定结果】
+{tier_phrase(tier, voice=SituationVoice.THIRD)}{stake_note}
+
 依上面说定的 JSON 格式给出裁决（reason 在前），只输出 JSON、不写任何多余内容。"""
         # Same source as the user message above: every fact this adjudication can see.
         facts = (
@@ -956,9 +1043,10 @@ class PhysicalExecutor(ActionExecutor):
             .add("意图", description)
             .add("期望结果", expected_outcome)
             .add("受事", recipient_line.partition("：")[2])
+            .add("已定结果", tier_phrase(tier, voice=SituationVoice.THIRD))
         )
         try:
-            with annotate_call(given_facts=facts):
+            with annotate_call(given_facts=facts, check_tier=tier.value):
                 response = await self._llm.complete(
                     LLMScene.AGENT_ACTION_NARRATION,
                     [
@@ -966,19 +1054,19 @@ class PhysicalExecutor(ActionExecutor):
                         LLMMessage(role="user", content=user),
                     ],
                     # Estimate each target shape and size max_tokens by the larger:
-                    # common: reason (≤100 chars ≈150) + deed (enum ~8) + success (~3)
+                    # common: reason (≤100 chars ≈150) + deed (enum ~8)
                     #   + outcome (40 chars ≈60) + fact (60 chars ≈90) + why (≤20 chars ≈30)
-                    #   + actor_damage (~3) + keys (~45) ≈389 tok
+                    #   + actor_damage (~3) + keys (~40) ≈381 tok
                     # actor condition group (always): actor_condition (≤15 chars ≈23) + steps (~3)
-                    #   + frees_actor (~3) + keys (~20) ≈438 tok
+                    #   + frees_actor (~3) + keys (~20) ≈430 tok
                     # person shape: + relation (~8) + target_damage (~3) + target_relief (~3)
                     #   + target_condition (≤15 chars ≈23) + steps (~3) + frees_target (~3)
-                    #   + keys (~25) ≈511 tok
+                    #   + keys (~25) ≈503 tok
                     # thing shape: + relation (~8, only when the act lands on someone's
-                    #   possession) + new_entity_state (~8) ≈454 tok
+                    #   possession) + new_entity_state (~8) + amount_moved on money (~8) ≈454 tok
                     # The person shape is the largest.
                     temperature=0.7,
-                    max_tokens=output_budget(511),
+                    max_tokens=output_budget(503),
                     json_mode=True,
                 )
             data = extract_json(response.content)
@@ -993,7 +1081,12 @@ class PhysicalExecutor(ActionExecutor):
         actor_name = self._directory.agent_name(agent.agent_id)
         fact = str(data.get("fact", "")).strip() or description
         new_entity_state = str(data.get("new_entity_state", "")) if has_entity else ""
-        succeeded = coerce_bool(data.get("success"), True)
+        succeeded = tier.succeeded
+        # A success moves at least something; a missing or garbled sum is the whole stake.
+        amount_moved = (
+            coerce_int(data.get("amount_moved"), default=stake, minimum=0, maximum=stake) or stake
+            if stake and succeeded else None
+        )
         return _Verdict(
             success=succeeded,
             # The judge sometimes fills why on success too. Unsliced: the prompt caps it.
@@ -1028,6 +1121,7 @@ class PhysicalExecutor(ActionExecutor):
                 data.get("actor_condition_steps", 0), default=0, minimum=0
             ),
             frees_actor=coerce_bool(data.get("frees_actor"), False),
+            amount_moved=amount_moved,
             deed=self._resolve_deed(
                 data.get("deed", ""),
                 is_person=is_person,

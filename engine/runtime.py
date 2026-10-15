@@ -44,6 +44,8 @@ from engine.message_system import MessageDelivery, MessageSystem
 from engine.npc_runner import NpcRunner
 from engine.run_control import RunController
 from engine.scheduler import AgentScheduler, StepExecutionPlan
+from engine.stage_narrator import StageNarrator, StepMaterial
+from engine.weather import WeatherSystem, change_notice
 from core.interfaces.llm import LLMRouter
 from engine.world_pressure import WorldPressureEvaluator
 if TYPE_CHECKING:
@@ -95,6 +97,8 @@ class NarrativeRuntime:
         trace_sink: TraceSink | None = None,
         start_event_seq: int = 0,
         fired_events: Iterable[Mapping[str, Any]] = (),
+        narration_enabled: bool = False,
+        weather: WeatherSystem | None = None,
     ) -> None:
         self._world_id = world_id
         self._clock = clock
@@ -106,6 +110,7 @@ class NarrativeRuntime:
         self._event_bus = event_bus
         self._broadcast_channel = broadcast_channel
         self._directory = directory
+        self._weather = weather
         # Empty by default: arbitration skips an action type with no executor. Pass
         # build_default_registry() for real routing.
         self._executor_registry: ActionExecutorRegistry = (
@@ -198,6 +203,17 @@ class NarrativeRuntime:
         fired = list(fired_events)
         self._event_system.restore_state(fired)
         self._director.restore_state(fired)
+        # Writes each finished step up for the audience, off the step loop; reads records only.
+        self._narrator: StageNarrator | None = (
+            StageNarrator(
+                world_id=world_id,
+                llm_router=llm_router,
+                snapshot_provider=snapshot_provider,
+                event_bus=event_bus,
+                directory=directory,
+            )
+            if narration_enabled else None
+        )
 
     @property
     def director(self) -> DirectorChannel:
@@ -279,9 +295,11 @@ class NarrativeRuntime:
         """Called when the world actually shuts down (session destroyed/reset), not per run return.
 
         Handles only the cross-step state that run()'s finally deliberately leaves alone: the
-        in-flight event-generation task.
+        in-flight event-generation task and the narrator's queue.
         """
         await self._event_system.aclose()
+        if self._narrator is not None:
+            await self._narrator.aclose()
 
     async def run_step(self, agents: List[Agent]) -> RuntimeStepResult:
         step_start = time.perf_counter()
@@ -302,7 +320,15 @@ class NarrativeRuntime:
                 "agent_count": len(agents),
             },
         )
-        self._environment.begin_step(step=step, world_time=world_time)
+        sky_before = self._weather.advance(world_time) if self._weather is not None else None
+        self._environment.begin_step(
+            step=step, world_time=world_time,
+            weather=self._weather.weather if self._weather is not None else None,
+            weather_notice=(
+                change_notice(sky_before, self._weather.weather)
+                if self._weather is not None and sky_before is not None else ""
+            ),
+        )
         # Records a step that raised never took would otherwise show up as this step's.
         self._processor.take_forced_records()
         # Self-limiting conditions expire here, before agent_spatials is built (not in the
@@ -333,6 +359,7 @@ class NarrativeRuntime:
                 all_agents=agents_dict,
                 locations=self._environment.space.all_places(),
                 entities=self._environment.all_live_entities(),
+                sky=self._weather.weather.sky if self._weather is not None else None,
             )
         # Reap whoever an injection just killed, before anything acts this step: otherwise the
         # dead keep ticking their actions, get interrupt calls and complete talks until the
@@ -667,6 +694,7 @@ class NarrativeRuntime:
                 "environment": self._environment.snapshot_state(),
                 # The broadcasts perceived this step, matching replay and perception.
                 "broadcasts": broadcast_records,
+                "weather": self._weather.snapshot() if self._weather is not None else None,
                 # Next seq to assign; restore (NarrativeApplication._build_runtime →
                 # start_event_seq) resumes strictly increasing.
                 "event_seq": self._event_seqs.next_seq,
@@ -696,8 +724,18 @@ class NarrativeRuntime:
             "events": serialized_events,
             "broadcasts": broadcast_records,
             "environment": self._environment.snapshot_state(),
+            "weather": self._weather.weather.to_dict() if self._weather is not None else None,
         }
         self._event_bus.publish(step_event)
+        if self._narrator is not None:
+            self._narrator.submit(StepMaterial(
+                step=step,
+                time_label=world_time.time_label,
+                day=world_time.total_days,
+                actions=all_action_records,
+                events=serialized_events,
+                broadcasts=broadcast_records,
+            ))
 
         tick_narratives = [r["outcome"] for r in tick_records]
         step_elapsed_ms = (time.perf_counter() - step_start) * 1000.0

@@ -142,3 +142,12 @@ def test_the_pacing_gate_stays_out_of_scope() -> None:
 
     src = inspect.getsource(EventSystem._passes_llm_check)
     assert "CLOSED_WORLD_FACT_RULE" not in src
+
+
+def test_the_check_assessment_stays_out_of_scope() -> None:
+    """The check assessment outputs enums and an 80-character reason shown only on the god-view
+    record; the narration that follows it carries the rule."""
+    import engine.check as mod
+
+    assert "CLOSED_WORLD_FACT_RULE" not in inspect.getsource(mod)
+    assert MARK not in mod._SYSTEM_PROMPT

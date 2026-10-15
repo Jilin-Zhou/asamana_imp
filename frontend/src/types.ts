@@ -90,6 +90,35 @@ export interface ActionTarget {
   reaches: TargetRef[];
 }
 
+/**
+ * The roll a result was narrated from (backend interaction/models.py CheckView): simulation facts
+ * in the engine's vocabulary, numbers spelled out. Only the observer ever sees these numbers; no
+ * agent does. Read the enums through lib/contract and the words through lib/check.
+ */
+// The abilities a roll drew on, by level (backend core.interfaces.check.AbilityBasis). A null
+// attribute counted nothing.
+export interface AbilityBasisView {
+  attribute: string | null; // lib/contract Attribute
+  attribute_level: number;
+  skill: string; // "" = no skill
+  skill_level: number;
+  opposing_attribute: string | null; // lib/contract Attribute; null = nobody resisted
+  opposing_level: number;
+}
+
+export interface CheckView {
+  difficulty: string; // lib/contract Difficulty
+  edge: string; // lib/contract Edge; the circumstances beyond the abilities; "even" when pure_chance
+  pure_chance: boolean;
+  dice: number[];
+  basis: AbilityBasisView;
+  dc: number;
+  modifier: number;
+  total: number;
+  tier: string; // lib/contract CheckTier
+  reason: string; // the assessor's rationale, third person and god-view
+}
+
 export interface ActionSummary {
   agent_id: string;
   agent_name: string;
@@ -147,6 +176,9 @@ export interface ActionSummary {
   inner_monologue: string;
   is_main_character: boolean;
   dialogue: DialogueTurn[];
+  // The roll behind `succeeded`; null when nothing was rolled (no doubt, or a type that never
+  // rolls).
+  check: CheckView | null;
   // Monotonic emission ordinal from the runtime — sort intra-step events by this,
   // never render it as user-visible text. 0 for initialization records.
   seq: number;
@@ -182,6 +214,8 @@ export interface EntityView {
   // The step it came into the world on, so new things are read off the step's own table
   // rather than by diffing (impossible for the feed's earliest step).
   created_step: number;
+  // Money only (entity_type "money"): how much is in the pile; 0 for anything else.
+  quantity: number;
 }
 
 // Movement transit: present while an agent is mid-move. The renderer walks it
@@ -411,6 +445,15 @@ export interface StepEvent {
   entities: Record<string, EntityView>;
   // Directed relations as they stand at the end of this step — the same edges GET /graph serves.
   relations: GraphEdge[];
+  // The one sky this step ran under; null for a world without weather.
+  weather: WeatherView | null;
+}
+
+// The world's sky (backend engine.weather). `sky` names what the map draws for rain, snow and
+// wind with the same words as a broadcast's phenomenon; clear and overcast draw nothing.
+export interface WeatherView {
+  sky: string; // clear / overcast / rain / snow / wind
+  severity: string; // low / medium / high
 }
 
 // Relationship graph (GET /api/worlds/{id}/graph). Nodes are agents; edges are
@@ -454,7 +497,15 @@ export interface AgentProfile {
   self_image: string;
   life_goal: string;
   secret: string;
+  abilities: AbilitiesView;
   is_main_character: boolean;
+}
+
+// A character's attributes (1–5, 3 = an ordinary adult) and skills (1–3), fixed at build
+// (backend core.interfaces.ability.Abilities).
+export interface AbilitiesView {
+  attributes: Record<string, number>; // keyed by lib/contract Attribute
+  skills: { name: string; level: number }[];
 }
 
 // Map focus/selection: the user can follow one or more agents and/or spotlight a
@@ -473,8 +524,39 @@ export type MapSelect =
   | { kind: "location"; id: string }
   | { kind: "clear" };
 
+/**
+ * The stage narrator's script for one step (backend interaction/models.py StepNarration).
+ * Written for the audience only. `line` and `aside` beats quote the record verbatim.
+ */
+export interface NarrationBeat {
+  kind: string; // narration / line / aside
+  text: string;
+  speaker_id: string; // code layer — the join key; never rendered
+  speaker: string; // the name to print
+}
+
+export interface NarrationScene {
+  scene: number;
+  continues: boolean; // carries on the scene of the same number from the step before
+  location_id: string;
+  location_name: string;
+  stage_direction: string;
+  cast: { agent_id: string; name: string }[];
+  beats: NarrationBeat[];
+}
+
+export interface StepNarration {
+  step: number;
+  act: number;
+  opens_act: boolean;
+  time_label: string;
+  memo: string; // the running synopsis at this point
+  scenes: NarrationScene[];
+}
+
 // WebSocket envelope: the backend tags each frame with a type.
 export type WsFrame =
   | { type: "status"; data: { world_id: string; status: RunState } }
   | { type: "snapshot"; data: StepEvent }
-  | { type: "step"; data: StepEvent };
+  | { type: "step"; data: StepEvent }
+  | { type: "narration"; data: StepNarration };
