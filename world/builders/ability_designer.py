@@ -63,7 +63,7 @@ _SYSTEM_PROMPT = f"""\
 - 专长名称是一门本事的名字，不是性格或身份（「镇定」「掌柜」都不是专长）。
 - 带多少钱按身份、家境与此刻的处境比出多寡，参照下面给的物价：穷人可以分文没有，富人也不会把家底都揣在身上。
   这个世界没有钱时一律填 0。
-- 物件记在它此刻的主人名下：人设、开场处境、秘密或物件描述表明归这个人所有、由他带着的（揣在怀里的信、随身佩的刀、自己挑着的货担）。
+- 物件记在它此刻的主人名下：人设、开场情形、秘密或物件描述表明归这个人所有、由他带着的（揣在怀里的信、随身佩的刀、自己挑着的货担）。
   摆在某处、藏在某处、归店铺或官府的，不记在任何人名下；不要为了让人有东西可用而分派。一件物件至多记在一人名下。
 
 【输出】
@@ -168,7 +168,7 @@ class AbilityDesigner:
                 parts.append(f"秘密：{soul.secret}")
             # The analysis' step-0 sketch: what he is doing as the story opens, and so what he has on him.
             if brief := str(d.metadata.get("brief") or ""):
-                parts.append(f"开场处境：{brief}")
+                parts.append(f"开场：{brief}")
             people.append(f"#{i} " + "｜".join(parts))
         roster = "\n".join(people)
         economy = analysis.economy

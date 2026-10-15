@@ -269,7 +269,7 @@ async def test_the_designer_puts_a_characters_own_things_in_his_hands() -> None:
     prompt = router.calls[0][1].content
     assert "#1 古琴：古琴的样子（在西市）" in prompt
     # The opening sketch is how the designer knows what someone has on him.
-    assert "开场处境：抱着古琴来西市寻买主" in prompt
+    assert "开场：抱着古琴来西市寻买主" in prompt
     # A landmark never changes hands, so it is never offered.
     assert "夹墙" not in prompt
 
