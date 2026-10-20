@@ -109,7 +109,7 @@ class ActionCandidate:
 # Static action catalog.  Behavior comes from the LLM's choice of type and
 # target, not from filtering this list at runtime.
 _ACTION_SPACE: List[ActionCandidate] = [
-    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（1v1，双方共同参与多步完成，生成完整对话，影响双边关系；必须在同一地点），但是交谈内容有可能会被同一地点的人听到。"),
+    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（1v1，双方共同参与多步完成，生成完整对话，影响双边关系；必须在同一地点），但是交谈内容有可能会被同一地点的人听到。交谈只动嘴，不经手钱物：要当面给钱给东西、或向人要钱要东西，选 TRADE。"),
     ActionCandidate(ActionType.SEND_MESSAGE, "向特定角色发送异步消息（对方下一步收到），或向场景内所有人广播通知（当步生效）；适合单边传达任意意图，收件人不在场也能送达"),
     ActionCandidate(ActionType.MOVE,         "移动到一个可前往的地点；若这一动还要把在场的某人强行一并带走（不问他愿不愿意），另填 move_carry_indices"),
     ActionCandidate(ActionType.WORK,         "专注完成某一件自身的事情（写作、练习、制作、经营、整理等）"),
@@ -121,7 +121,7 @@ _ACTION_SPACE: List[ActionCandidate] = [
     ActionCandidate(ActionType.REST,         "暂时搁置外部事务进行休息（生理疲劳、情绪耗尽、心情低落、生命力亏损均可）；需要多个步骤，休息得越久，恢复的生命力越多"),
     ActionCandidate(ActionType.ERRAND,       "派一个听人吩咐做事的替我跑一趟别处：先定他去哪，再看要不要让他带上东西、指名一个人、**替我把一句话原样说出去**（指了人就说给那人听，没指人就在那处当众说）——填了哪几样就办哪几样。他没有心智：只会走到、交到、把那句话一字不改地说出口、把**眼睛看得见的**（谁在场、有什么东西、刚出了什么事）带回来；他不会打听、不会问话、不会看人脸色，更不会替我劝人、引开人、盯梢。我这一拍交代完就自由，不必等他回来"),
     # Appended last: selected_index is a position in this list.
-    ActionCandidate(ActionType.TRADE,        "与此处标(在场)的某人当面谈一笔买卖或交换：拿我手上的东西或钱，换他手上的东西或钱；谈成了双方当场交割，谈不成什么都不动。填 trade_person_index 指认对方，再至少写清一边：我出什么（trade_give_*）、要他什么（trade_ask_*）"),
+    ActionCandidate(ActionType.TRADE,        "与此处标(在场)的某人当面交割钱物：买卖、交换；只出不要（还债、借钱给人、付酬、送礼、行贿）；只要不出（讨债、索要）。对方肯了当场换手，不肯什么都不动。填 trade_person_index 指认对方，再至少写清一边：我出什么（trade_give_*）、要他什么（trade_ask_*）"),
 ]
 
 # Fixed expectation for SEND_MESSAGE: an async action can only confirm "the message went out"
@@ -1135,7 +1135,7 @@ class DecisionEngine:
 - 当面说话/动手（TALK/COVERT/PHYSICAL-对人）只能挑“我能触及的人”里标(在场)的；只有传讯（SEND_MESSAGE）可以发给标(不在场)的人。
 - 动手（PHYSICAL）必须指认出下手的对象，且**只指认一个**：对“我能触及的人”里的人就填 physical_person_index，对“此处听人吩咐做事的”里的人就填 physical_npc_index（两份名单各数各的序号，拿错名单就打到别人身上了），对物就填 physical_entity_index，名单外的抽象之物才自填 item_id——四者填其一，一个都不填等于没动手，这一拍就白费了。
 - 唯一的例外是「把手里的东西交出去」：这一动受动的仍是那样东西（照填 physical_entity_index），只是另可填 physical_recipient_index 指认我要交给谁——他必须是“我能触及的人”里标(在场)的。我只是把东西放下、不交给谁，就不填它。
-- 买卖/交换（TRADE）只能和标(在场)的人谈：我出的东西必须在我手上，我要的东西必须在他手上；钱另有两栏，写数目即可。两边至少写一样，两边都空就不是买卖。
+- 当面交割钱物（TRADE）只能和标(在场)的人谈：我出的东西必须在我手上，我要的东西必须在他手上；钱另有两栏，写数目即可。两边至少写一样：只写我出的，是还债、借出、付酬、送礼、行贿；只写我要的，是讨债、索要；两边都空就不是交割。
 - 派人跑腿（ERRAND）时我交代他的话——去看什么、看完回来报我、别惊动人——写进 action_description，绝不写进 errand_message：那一栏他会一字不改说出口，我的交代一旦写进去，就等于我自己把此行的目的喊了出来。
 - 如果要进行的行动涉及到人，行动一定要与【相关人物关系】中描述的关系符合常识，除非有特殊情况。
 - 不要脱离我此刻的需求与目标空转，也别被与我无关的事带跑。

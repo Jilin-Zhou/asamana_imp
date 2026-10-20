@@ -1,8 +1,9 @@
-"""Trade executor for TRADE actions."""
+"""Trade executor for TRADE: money and things changing hands face to face."""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, List
 
 from core.context import GivenFacts, annotate_call
@@ -32,11 +33,14 @@ _MAX_LINES = 6
 
 _TRADE_SYSTEM = f"""\
 【任务】
-你是中立的叙事者。A 想与 B 当面做一笔买卖或交换，条款由 A 提出。基于双方各自的处境，客观写出两人讨价还价的对白，
-再据对白如实判定谈没谈成、按什么钱数成交。你不代入任何一方。
+你是中立的叙事者。A 想与 B 当面交割一笔钱物，条款由 A 提出：可以是买卖、交换；可以只有 A 出（还债、借出、付酬、
+送礼、行贿）；也可以只有 A 要（讨债、索要）。基于双方各自的处境，客观写出两人当面的对白，再据对白如实判定
+B 肯不肯、按什么钱数换手。你不代入任何一方。
 
 【约束】
-- 成不成交是 B 自己的决定：看他要不要、舍不舍得、信不信得过 A、价钱公不公道（参照所给行情）。不替任何一方成全，谈不拢是正当结局。
+- 肯不肯是 B 自己的决定：看他要不要、舍不舍得、信不信得过 A、价钱公不公道（参照所给行情）、收下有没有风险、
+  欠的该不该还、拿不拿得出。不替任何一方成全，谈不拢、不肯收、赖着不给都是正当结局。
+- 条款只有一边时，A 出钱物换来的可以是一句话、一个答应、一笔旧账的了结，不必是东西；这些只在对白里说定，不算换手的东西。
 - 钱数可以讨价还价、谈高谈低；但换手的东西只能是条款里的那几样，不添不减。成交的钱数不得超过付钱一方手上有的。
 - 每一方只能说他自己那一栏里有的东西，不替对方亮底牌。
 - 对白从人设、处境与彼此关系里自然长出，简练口语；不说教、不背景倾倒、不书面腔。
@@ -45,8 +49,8 @@ _TRADE_SYSTEM = f"""\
 【输出】
 严格输出以下 JSON，不要任何多余内容（speaker 用 1 代表 A、2 代表 B）。字段按下面的次序写：先写对白，再据对白写判定的依据，再给结论。
 - dialogue：至多 {_MAX_LINES} 句，每句 ≤40字。
-- reason：B 为什么答应或不答应、钱数是怎么谈定的（≤60字）。
-- agreed：成交为 true，没成交为 false。
+- reason：B 为什么肯或不肯、钱数是怎么谈定的（≤60字）。
+- agreed：B 肯了、钱物当场换手为 true，否则为 false。
 - give_money：成交时 A 实际付给 B 的钱数（整数）；条款里 A 不出钱、或没成交，填 0。
 - ask_money：成交时 B 实际付给 A 的钱数（整数）；条款里 A 不要钱、或没成交，填 0。
 - observation：一个听不见内容的路人看到的样子（≤25字）：只写神色、举止与收场，不写谈的是什么、不写钱数。主语不必写，系统会补上。
@@ -60,8 +64,22 @@ _TRADE_SYSTEM = f"""\
 _MAX_TOKENS = output_budget(605)
 
 
+@dataclass(frozen=True)
+class _Wording:
+    """How one handover reads, by the shape of its terms: both ways is a bargain, A only giving
+    is a payment (a debt repaid, a loan, a bribe), A only asking is a demand."""
+    topic: str    # what A set out to do, before any ruling
+    deal: str     # how it ended, amounts as they landed
+    gist: str
+    seen: str     # an onlooker's view: who handed something to whom, never how much
+    a_fact: str   # each side's fallback memory, subject left out
+    b_fact: str
+
+
 class TradeExecutor(SocialExecutor):
-    """Executor for TRADE: a face-to-face bargain that moves things both ways at once.
+    """Executor for TRADE: things and money changing hands face to face, whole or not at all.
+    Both ways it is a bargain; one way it is a payment (a debt repaid, a loan, a bribe) or a
+    demand. What a one-way payment buys is said, not handed over.
 
     Shares TALK's frame: the counterpart is invited (his turn is spent), one neutral narrator
     voices both sides, and each side then records the scene in his own words. What it adds is
@@ -185,7 +203,8 @@ class TradeExecutor(SocialExecutor):
 
         if verdict is None:
             # The haggling never happened: a null step for both, nothing changes hands.
-            null = scene_line(location, f"{a_name}与{b_name}谈买卖。")
+            topic = self._wording(a_name, b_name, terms, 0, 0, False, environment).topic
+            null = scene_line(location, f"{topic}。")
             return [
                 self._trade_result(pid, other, other_name, step=step, state=state, outcome=null,
                                    summary=None, dialogue=[], observations=[])
@@ -202,32 +221,30 @@ class TradeExecutor(SocialExecutor):
             *([Transfer(from_id=b_id, to_id=a_id, quantity=ask_money)] if ask_money else []),
         ] if agreed else []
         agreed = bool(transfers)
-        deal = self._deal_line(a_name, b_name, terms, give_money, ask_money, environment) if agreed else "没有谈拢。"
+        words = self._wording(a_name, b_name, terms, give_money, ask_money, agreed, environment)
         transcript = "\n".join(f"{t['speaker']}：{t['line']}" for t in dialogue)
-        record = f"{transcript}\n（{deal}）"
-        outcome = scene_line(location, f"{a_name}与{b_name}谈买卖：\n{transcript}\n——{deal}")
-        gist = scene_line(location, f"{a_name}与{b_name}谈买卖，{deal}")
-        seen = f"{a_name}与{b_name}谈了一笔买卖" + ("，东西换了手。" if agreed else "，没有谈拢。")
+        record = f"{transcript}\n（{words.deal}）"
+        outcome = scene_line(location, f"{words.topic}：\n{transcript}\n——{words.deal}")
+        gist = scene_line(location, words.gist)
         observations = observed_here(environment, a_id, scene_line(
-            location, f"{seen}{bystander}" if bystander else seen,
+            location, f"{words.seen}{bystander}" if bystander else words.seen,
         ))
 
-        ending = "谈成了" if agreed else "没谈拢"
         summary_a, summary_b = await asyncio.gather(
             self._memory_summary(
                 agent=a, other_id=b_id, other_name=b_name, transcript=record, purpose=state.purpose,
-                fallback_fact=f"与{b_name}谈了一笔买卖，{ending}。", is_initiator=True, now_step=step,
+                fallback_fact=words.a_fact, is_initiator=True, now_step=step,
                 environment=environment, expected_outcome=state.expected_outcome,
             ),
             self._memory_summary(
                 agent=b, other_id=a_id, other_name=a_name, transcript=record, purpose=state.purpose,
-                fallback_fact=f"与{a_name}谈了一笔买卖，{ending}。", is_initiator=False, now_step=step,
+                fallback_fact=words.b_fact, is_initiator=False, now_step=step,
                 environment=environment,
             ),
             return_exceptions=True,
         )
         # Whether the deal was struck is the narrator's ruling, not either side's feeling about it.
-        why = "" if agreed else (reason or "没有谈拢")
+        why = "" if agreed else (reason or words.deal)
         results = [self._trade_result(
             a_id, b_id, b_name, step=step, state=state, outcome=outcome, gist=gist, dialogue=dialogue,
             observations=observations, transfers=transfers, agreed=agreed, why=why,
@@ -241,19 +258,49 @@ class TradeExecutor(SocialExecutor):
             ))
         return results
 
-    def _deal_line(
+    def _wording(
         self, a_name: str, b_name: str, terms: TradeTerms, give_money: int, ask_money: int,
-        environment: "EnvironmentSystem",
-    ) -> str:
+        agreed: bool, environment: "EnvironmentSystem",
+    ) -> _Wording:
         def side(entity_id: str, money: int) -> str:
-            parts = [environment.get_entity(entity_id).name] if entity_id and environment.get_entity(entity_id) else []
+            entity = environment.get_entity(entity_id) if entity_id else None
+            parts = [entity.name] if entity is not None else []
             if money:
                 parts.append(self._economy.amount_text(money))
-            return "与".join(parts) or "分文未出"
+            return "与".join(parts)
 
-        return (
-            f"成交：{a_name}付出{side(terms.give_entity_id, give_money)}，"
-            f"{b_name}付出{side(terms.ask_entity_id, ask_money)}。"
+        a, b = a_name, b_name
+        gives = bool(terms.give_entity_id or terms.give_amount)
+        asks = bool(terms.ask_entity_id or terms.ask_amount)
+        given, taken = side(terms.give_entity_id, give_money), side(terms.ask_entity_id, ask_money)
+        if gives and asks:
+            deal = (
+                f"成交：{a}付出{given or '分文未出'}，{b}付出{taken or '分文未出'}。" if agreed else "没有谈拢。"
+            )
+            ending = "谈成了" if agreed else "没谈拢"
+            return _Wording(
+                topic=f"{a}与{b}谈买卖", deal=deal, gist=f"{a}与{b}谈买卖，{deal}",
+                seen=f"{a}与{b}谈了一笔买卖" + ("，钱物换了手。" if agreed else "，没有谈拢。"),
+                a_fact=f"与{b}谈了一笔买卖，{ending}。", b_fact=f"与{a}谈了一笔买卖，{ending}。",
+            )
+        if gives:
+            offer = side(terms.give_entity_id, terms.give_amount)
+            return _Wording(
+                topic=f"{a}要把{offer}交给{b}",
+                deal=f"{b}收下了{given}。" if agreed else f"{b}没有收。",
+                gist=f"{a}把{given}交给了{b}。" if agreed else f"{a}要把{offer}交给{b}，{b}没有收。",
+                seen=f"{a}把一些钱物交给了{b}。" if agreed else f"{a}要把一些钱物交给{b}，{b}没有收。",
+                a_fact=f"把{given}交给了{b}。" if agreed else f"要把{offer}交给{b}，{b}没有收。",
+                b_fact=f"{a}把{given}交给了我，我收下了。" if agreed else f"{a}要把{offer}交给我，我没有收。",
+            )
+        demand = side(terms.ask_entity_id, terms.ask_amount)
+        return _Wording(
+            topic=f"{a}向{b}讨要{demand}",
+            deal=f"{b}交出了{taken}。" if agreed else f"{b}没有给。",
+            gist=f"{b}把{taken}交给了{a}。" if agreed else f"{a}向{b}讨要{demand}，{b}没有给。",
+            seen=f"{b}把一些钱物交给了{a}。" if agreed else f"{a}向{b}讨要什么，{b}没有给。",
+            a_fact=f"向{b}讨要{demand}，{b}交出了{taken}。" if agreed else f"向{b}讨要{demand}，{b}没有给。",
+            b_fact=f"{a}向我讨要{demand}，我交出了{taken}。" if agreed else f"{a}向我讨要{demand}，我没有给。",
         )
 
     def _terms_block(
@@ -310,7 +357,7 @@ class TradeExecutor(SocialExecutor):
 【现场】
 {scene}
 
-【这笔买卖】（{a_name}提出的条款与盘算，不是已定的事实）
+【这笔交割】（{a_name}提出的条款与盘算，不是已定的事实）
 {a_name}的打算：{purpose}
 {terms_text}
 
@@ -321,7 +368,7 @@ class TradeExecutor(SocialExecutor):
             .add(f"{a_name} 手上的", lanes[0])
             .add(f"{b_name} 手上的", lanes[1])
             .add("现场", scene)
-            .add("这笔买卖", terms_text)
+            .add("这笔交割", terms_text)
         )
         try:
             with annotate_call(given_facts=facts):

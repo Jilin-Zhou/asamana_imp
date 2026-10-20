@@ -340,6 +340,46 @@ async def test_a_refused_deal_moves_nothing(container, market: EnvironmentSystem
     assert initiator.factual_memory   # a refusal is still something that happened
 
 
+_PAYMENT = TradeTerms(counterpart_id="b", give_amount=20)
+_DEMAND = TradeTerms(counterpart_id="b", ask_entity_id="ring")
+
+
+async def test_a_payment_moves_one_way_and_reads_as_handing_over(container, market: EnvironmentSystem) -> None:
+    """Repaying, lending or bribing: A only gives, and what it buys is said, not handed over."""
+    paid = {**_STRUCK, "give_money": 20}
+    initiator, counterpart = await _trade(container, _Router(paid), market, _PAYMENT)
+    assert initiator.transfers == [Transfer(from_id="a", to_id="b", quantity=20)]
+    assert initiator.succeeded and counterpart.succeeded
+    assert initiator.gist.endswith("甲把20两银子交给了乙。")
+    assert "甲要把20两银子交给乙：" in initiator.outcome
+    # Onlookers see something handed over, never how much.
+    (seen,) = initiator.observations
+    assert "交给了乙" in seen.text and "银子" not in seen.text
+
+
+async def test_a_refused_payment_moves_nothing(container, market: EnvironmentSystem) -> None:
+    initiator, _ = await _trade(container, _Router({**_STRUCK, "agreed": False, "reason": ""}), market, _PAYMENT)
+    assert initiator.transfers == [] and not initiator.succeeded
+    assert initiator.gist.endswith("甲要把20两银子交给乙，乙没有收。")
+    assert initiator.failure_reason == "乙没有收。"
+
+
+@pytest.mark.parametrize(("agreed", "gist"), [(True, "乙把玉环交给了甲。"), (False, "甲向乙讨要玉环，乙没有给。")])
+async def test_a_demand_moves_only_what_he_hands_over(
+    container, market: EnvironmentSystem, agreed: bool, gist: str,
+) -> None:
+    """Collecting a debt or demanding: A only asks, and B may pay up or refuse."""
+    initiator, _ = await _trade(container, _Router({**_STRUCK, "agreed": agreed, "give_money": 0}), market, _DEMAND)
+    assert initiator.transfers == ([Transfer(from_id="b", to_id="a", entity_id="ring")] if agreed else [])
+    assert initiator.gist.endswith(gist)
+
+
+def test_a_talk_never_hands_money_or_things_over() -> None:
+    from engine.executors.social import _DIALOGUE_SYSTEM
+
+    assert "钱物不换手" in _DIALOGUE_SYSTEM
+
+
 async def test_haggling_that_never_happened_is_a_null_step(container, market: EnvironmentSystem) -> None:
     results = await _trade(container, _Router(None), market, _TERMS)
     assert [r.adjudication_failed for r in results] == [True, True]
