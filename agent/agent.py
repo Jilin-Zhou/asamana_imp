@@ -220,9 +220,6 @@ class Agent:
         # decidable N. Not persisted: the foiled buffer isn't snapshotted either, and restoring only
         # the count would boost an intent the agent no longer remembers being blocked on.
         self._foiled_misses: Dict[tuple[str, str], tuple[int, int]] = {}
-        # The matter (``_foiled_key``) of the act he set out on himself, so a result can tell his own
-        # aim from an act he was drawn into; only his own can be a setback. Not persisted.
-        self._own_matter: "tuple[str, str] | None" = None
 
     def remember_agent(self, agent_id: str, identity: PerceivedIdentity) -> None:
         """Cache an agent's perceived name + gender.
@@ -638,7 +635,6 @@ class Agent:
             insight_sources=dict(retrieval_result.insight_sources),
             # Never persisted, so absent from recall; decide needs it to change tactics.
             recent_foiled_attempts=recent_foiled,
-            recent_setbacks=self.memory_system.recent_setbacks(current_step),
         )
 
     def apply_vitality_damage(self, delta: float, *, step: int, death_cause: str | None) -> None:
@@ -751,7 +747,6 @@ class Agent:
             # The intent landed, so the foiled trace ends; an in-world failure still counts as
             # having happened.
             self._clear_foiled(result.action)
-            self._track_setback(result)
             # Display names keep the experiential rewrite from inventing who was involved.
             related_names, relation_ctx = await self._event_people_context(
                 result.action.target.acted_on_agents
@@ -1211,7 +1206,6 @@ class Agent:
             long_term_goals=plan.need_evaluation.long_term_goals,
             short_term_goal_entities=list(plan.need_evaluation.short_term_goal_entities),
         )
-        self._own_matter = _foiled_key(plan.action)
         self.personality.begin_action(
             step=plan.step,
             description=plan.action.action_description,
@@ -1234,7 +1228,6 @@ class Agent:
         """
         # No apply_need_state: being conscripted discards this step's own goals, so he doesn't
         # bring a separate agenda into the conversation; the cost is one wasted goal generation.
-        self._own_matter = None   # drawn into someone else's act
         self.personality.begin_action(
             step=step,
             description=description,
@@ -1270,22 +1263,6 @@ class Agent:
         if _foiled_key_has_object(key):
             self._foiled_misses.pop(key, None)
         self.memory_system.clear_foiled_attempts(key, action.action_description)
-
-    def _track_setback(self, result: ActionResult) -> None:
-        """An act of his own that happened but missed its aim is a setback; the same matter
-        working ends its run. Not for an act he was drawn into: missing someone else's aim is no
-        reason for him to change approach."""
-        key = _foiled_key(result.action)
-        if key != self._own_matter:
-            return
-        description = result.action.action_description
-        if result.succeeded:
-            self.memory_system.clear_setbacks(key, description)
-        elif description:
-            # action_description is already first-person.
-            self.memory_system.note_setback(
-                step=result.action.step, text=f"{description}——没能如愿。", key=key, gist=description,
-            )
 
     def _foiled_misses_for(self, action: "AgentAction | None", step: int) -> int:
         """How many recent beats this action's matter failed to land; also prunes stale keys

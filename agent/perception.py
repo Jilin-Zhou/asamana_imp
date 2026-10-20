@@ -84,8 +84,6 @@ class InternalContext:
     # Transient (from MemorySystem.recent_foiled_attempts, not the persistent substrate); only
     # decide sees them, to back "change tactics after repeated failure".
     recent_foiled_attempts: List[str] = field(default_factory=list)
-    # Same channel for his acts that happened but missed their aim (MemorySystem.recent_setbacks).
-    recent_setbacks: List[str] = field(default_factory=list)
 
 
 @dataclass

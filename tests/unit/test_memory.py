@@ -2142,30 +2142,3 @@ async def test_persist_failure_names_the_exception_even_when_its_message_is_empt
     record = next(r for r in caplog.records if r.getMessage() == "memory_persist_failed")
     assert "TimeoutError" in record.error
 
-
-
-# ---------------------------------------------------------------------------
-# Setbacks: his own acts that happened but missed their aim, counted like foiled attempts
-# ---------------------------------------------------------------------------
-
-
-def test_setbacks_merge_with_a_count_and_clear_when_the_matter_works(container) -> None:
-    system = _make_memory_system(container)
-    key = ("talk", "agent-shimin")
-    for step, gist in ((1, "问李世民今夜可有定策"), (4, "再去问李世民今夜可有定策"), (8, "又去问李世民今夜可有定策")):
-        system.note_setback(step=step, text=f"{gist}——没能如愿。", key=key, gist=gist)
-    (line,) = system.recent_setbacks(9)
-    assert "近来同一件事我已碰壁3次。" in line
-    # A separate channel from things that never happened.
-    assert system.recent_foiled_attempts(9) == []
-    system.clear_setbacks(key, "问李世民")
-    assert system.recent_setbacks(9) == []
-
-
-def test_setbacks_reach_further_back_than_foiled_attempts(container) -> None:
-    system = _make_memory_system(container)
-    key = ("talk", "agent-shimin")
-    system.note_setback(step=1, text="问李世民——没能如愿。", key=key, gist="问李世民")
-    system.note_foiled_attempt(step=1, text="想找李世民，他不在。", key=key, gist="找李世民")
-    assert system.recent_setbacks(10) and system.recent_foiled_attempts(10) == []
-    assert system.recent_setbacks(12) == []

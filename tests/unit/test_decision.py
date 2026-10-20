@@ -279,14 +279,12 @@ def test_every_declared_fact_is_one_the_prompt_actually_showed() -> None:
     aw.insights = [_mem(3, MemoryStream.EXPERIENTIAL, MemoryKind.INSIGHT, "他等的不是准信")]
     aw.period_summaries = [_mem(4, MemoryStream.EXPERIENTIAL, MemoryKind.SUMMARY, "那几日人心浮动")]
     aw.recent_foiled_attempts = ["遣人递信，未得回音（已试过2次）"]
-    aw.recent_setbacks = ["问李世民可肯放行——没能如愿。近来同一件事我已碰壁3次。"]
 
     from agent.decision import _ACTION_SPACE
 
     _system, user, facts = DecisionEngine(None)._build_decision_prompt(  # noqa: SLF001
         _make_personality(), packet, _ACTION_SPACE)
     assert facts, "用例没造出任何事实，这条守卫会空转"
-    assert "我近来碰了壁的事" in user and "碰壁3次" in user
     for fact in facts:
         channel, _, body = fact.partition("：")
         assert body, f"申报少了通道前缀：{fact!r}"

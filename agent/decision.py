@@ -938,15 +938,6 @@ class DecisionEngine:
                 f"同一件事试过不止一次的会注明次数；{MEMORY_ORDER_HINT}）：\n"
                 + "\n".join(f"- {t}" for t in awareness.recent_foiled_attempts)
             )
-        if awareness.recent_setbacks:
-            # Acts that did happen (they are in the memories above too) but missed their aim; the
-            # count is what the memories don't say.
-            facts.add("碰了壁的事", awareness.recent_setbacks)
-            lines.append(
-                f"我近来碰了壁的事（做了，但没达到目的；同一件事碰壁不止一次的会注明次数。同一件事用同一个办法碰壁三次以上，就别再原样去碰，"
-                f"该换个办法、换个人，或先去做别的；{MEMORY_ORDER_HINT}）：\n"
-                + "\n".join(f"- {t}" for t in awareness.recent_setbacks)
-            )
         if awareness.insights:
             facts.add("已形成的判断", render_memory_lines(
                 awareness.insights, now_step=_now, seconds_per_step=_sps, world_start_second_of_day=_day_start))
