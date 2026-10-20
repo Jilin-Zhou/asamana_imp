@@ -164,8 +164,12 @@ def _build_agent_action(
                 ),
             )
     intent = None
-    if atype == ActionType.PHYSICAL and spec.get("amount"):
-        intent = ActionIntent(purpose=spec.get("description", ""), amount=int(spec["amount"]))
+    if atype == ActionType.PHYSICAL and (spec.get("amount") or spec.get("covert")):
+        intent = ActionIntent(
+            purpose=spec.get("description", ""),
+            amount=int(spec.get("amount") or 0) or None,
+            covert=bool(spec.get("covert")),
+        )
     if atype == ActionType.TRADE and target.acts_on:
         # give / ask name things the scene registered; money goes by amount.
         def thing(name: object) -> str:

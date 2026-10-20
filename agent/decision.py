@@ -35,8 +35,10 @@ from core.context import (
     note_active_call_adoption,
 )
 from core.interfaces.action import (
+    KIND_AGENT,
     KIND_ITEM,
     KIND_MONEY,
+    KIND_NPC,
     KIND_OBJECT,
     ActionTarget, ActionType, AgentAction, ErrandOrder, Ref, TradeTerms,
 )
@@ -89,6 +91,9 @@ class ActionIntent:
     # PHYSICAL on money: how much of the pile the act is about.
     amount: int | None = None
 
+    # PHYSICAL on a thing: done unseen (stealing, planting), so only exposure tells anyone.
+    covert: bool = False
+
     # TRADE: what is offered and asked for.
     trade: "TradeTerms | None" = None
 
@@ -113,7 +118,7 @@ _ACTION_SPACE: List[ActionCandidate] = [
     ActionCandidate(ActionType.SEND_MESSAGE, "向特定角色发送异步消息（对方下一步收到），或向场景内所有人广播通知（当步生效）；适合单边传达任意意图，收件人不在场也能送达"),
     ActionCandidate(ActionType.MOVE,         "移动到一个可前往的地点；若这一动还要把在场的某人强行一并带走（不问他愿不愿意），另填 move_carry_indices"),
     ActionCandidate(ActionType.WORK,         "专注完成某一件自身的事情（写作、练习、制作、经营、整理等）"),
-    ActionCandidate(ActionType.PHYSICAL,     "对特定目标施加直接的、即时的物理干预或身体动作（攻击、推倒、搀扶、保护、制止、夺取、使用、拿起、放下、破坏等，可有益可有害）；对人动手填 physical_person_index，对物动手填 physical_entity_index，对此处听人吩咐做事的动手另有专属的一栏（见输出格式），三者必居其一；若是把手里的东西交给在场某人，另填 physical_recipient_index"),
+    ActionCandidate(ActionType.PHYSICAL,     "对特定目标施加直接的、即时的物理干预或身体动作（攻击、推倒、搀扶、保护、制止、夺取、使用、拿起、放下、破坏等，可有益可有害）；对人动手填 physical_person_index，对物动手填 physical_entity_index，对此处听人吩咐做事的动手另有专属的一栏（见输出格式），三者必居其一；若是把手里的东西交给在场某人，另填 physical_recipient_index；对东西下手还可以瞒着在场的人（偷、扒、栽赃），另填 physical_covert"),
     # State only what it can do and its hard constraints. Don't say it may fail, and don't say it
     # "changes nothing". That is a code-layer fact (the executor has no world write access), and
     # to the character it reads as "this option is useless", so models almost stop picking it.
@@ -176,6 +181,8 @@ class LLMSelection:
     errand: "ErrandOrder | None" = None
     # PHYSICAL on money only: how much of the pile.
     amount: int | None = None
+    # PHYSICAL on a thing only: done unseen.
+    covert: bool = False
     # TRADE only: what is offered and asked for.
     trade: "TradeTerms | None" = None
 
@@ -276,6 +283,7 @@ class _Bound:
     description_suffix: str = ""
     errand: "ErrandOrder | None" = None
     amount: int | None = None
+    covert: bool = False
     trade: "TradeTerms | None" = None
 
 
@@ -382,6 +390,10 @@ def _bind_physical(slots: _Slots) -> "_Bound | None":
         return _reject("physical_without_target")
     # How much of a pile of money; meaningless on anything else, and unfilled means all of it.
     amount = _amount(slots.payload, "physical_amount") if acted_on and acted_on.kind == KIND_MONEY else 0
+    # Only a listed thing can be taken or planted unseen; a person always feels hands laid on him.
+    covert = bool(
+        acted_on and acted_on.kind not in (KIND_AGENT, KIND_NPC, KIND_OBJECT) and slots.flag("physical_covert")
+    )
     # The recipient goes into reaches, not acts_on: the act is on the thing (it changes hands)
     # and he is only affected. Not claims either — handing something over doesn't spend his turn.
     return _Bound(
@@ -390,6 +402,7 @@ def _bind_physical(slots: _Slots) -> "_Bound | None":
             reaches=[Ref.agent(recipient_id)] if recipient_id else [],
         ),
         amount=amount or None,
+        covert=covert,
     )
 
 
@@ -638,6 +651,7 @@ class DecisionEngine:
             destination=selection.target.acted_on_place if selection.action_type == ActionType.MOVE else None,
             errand=selection.errand,
             amount=selection.amount,
+            covert=selection.covert,
             trade=selection.trade,
         )
         return AgentAction(
@@ -779,7 +793,7 @@ class DecisionEngine:
                     # may each carry a bracketed date (ABSOLUTE_TIME_RULE, ≈8 chars×3 ≈36 tok) → ~416.
                     # Per-type extras are mutually exclusive: PHYSICAL recipient index ≈11 or
                     # item_id≤10 chars ≈20 → ≤~436; MOVE move_carry_indices ≈12 → ~439; SEND
-                    # message_announce ≈8 → ~447; PHYSICAL on money adds physical_amount ≈8; TRADE
+                    # message_announce ≈8 → ~447; PHYSICAL on money adds physical_amount ≈8 and a covert flag ≈8; TRADE
                     # five number fields ≈55 → ~471. ERRAND is costliest: ~416 + errand_message≤60
                     # chars ≈90 + four index fields ≈44 + errand_announce ≈8 + errand_amount ≈8 → ~566.
                     max_tokens=output_budget(566),
@@ -1135,6 +1149,7 @@ class DecisionEngine:
 - 当面说话/动手（TALK/COVERT/PHYSICAL-对人）只能挑“我能触及的人”里标(在场)的；只有传讯（SEND_MESSAGE）可以发给标(不在场)的人。
 - 动手（PHYSICAL）必须指认出下手的对象，且**只指认一个**：对“我能触及的人”里的人就填 physical_person_index，对“此处听人吩咐做事的”里的人就填 physical_npc_index（两份名单各数各的序号，拿错名单就打到别人身上了），对物就填 physical_entity_index，名单外的抽象之物才自填 item_id——四者填其一，一个都不填等于没动手，这一拍就白费了。
 - 唯一的例外是「把手里的东西交出去」：这一动受动的仍是那样东西（照填 physical_entity_index），只是另可填 physical_recipient_index 指认我要交给谁——他必须是“我能触及的人”里标(在场)的。我只是把东西放下、不交给谁，就不填它。
+- 瞒着人下手（physical_covert）只对东西：偷、扒是暗中拿走别人身上或此处的东西；栽赃、悄悄塞给是暗中把我手上的东西放到在场某人身上（另填 physical_recipient_index）。瞒不瞒得住看手上功夫，一旦被看破，就和当众动手一样。
 - 当面交割钱物（TRADE）只能和标(在场)的人谈：我出的东西必须在我手上，我要的东西必须在他手上；钱另有两栏，写数目即可。两边至少写一样：只写我出的，是还债、借出、付酬、送礼、行贿；只写我要的，是讨债、索要；两边都空就不是交割。
 - 派人跑腿（ERRAND）时我交代他的话——去看什么、看完回来报我、别惊动人——写进 action_description，绝不写进 errand_message：那一栏他会一字不改说出口，我的交代一旦写进去，就等于我自己把此行的目的喊了出来。
 - 如果要进行的行动涉及到人，行动一定要与【相关人物关系】中描述的关系符合常识，除非有特殊情况。
@@ -1171,6 +1186,7 @@ class DecisionEngine:
   "physical_npc_index": <若我选 PHYSICAL 且要对**此处听人吩咐做事的**那些人动手(拦下、按住、夺他手里的东西)：填"此处听人吩咐做事的"里的序号(1起)；否则省略>,
   "physical_entity_index": <若我选 PHYSICAL 且要**对物**动手：填"我够得着的东西"里那样东西的序号(1起)；对人动手则省略>,
   "physical_recipient_index": <仅当我这一动是把手中之物交到某人手上：填"我能触及的人"里某个标(在场)者的序号(1起)；只是把东西放下、或这一动与交付无关，一律省略>,
+  "physical_covert": <仅当 PHYSICAL 落在一样东西上、而我要瞒着在场的人下手（偷、扒、顺手牵羊、悄悄塞到某人身上）：填 true；当众动手、或对人动手，一律省略>,
   "item_id": "<仅当 PHYSICAL 的目标不在上面两份名单里(抽象之物，如'门'、'地面')才自填名称，≤10字；能用序号就别用它；非 PHYSICAL 省略>",
   "physical_amount": <仅当 PHYSICAL 落在一堆钱上(physical_entity_index 指的是钱)：这一动涉及多少钱，按它的计数单位的整数——交出多少、拿走多少；整笔都算就省略>,
   "errand_npc_index": <若我选 ERRAND：填"此处听人吩咐做事的"里那个人的序号(1起)；否则省略。**必填**——这一动就是吩咐他去办，没有他就不成立>,
@@ -1276,6 +1292,7 @@ class DecisionEngine:
             target=bound.target,
             errand=bound.errand,
             amount=bound.amount,
+            covert=bound.covert,
             trade=bound.trade,
             action_description=description.strip() + bound.description_suffix,
             inner_monologue=inner_monologue,

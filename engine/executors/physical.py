@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, List
 
 from agent.personality import EmotionType, parse_emotion_type
@@ -44,7 +44,7 @@ from engine.executors.base import (
     ActionExecutionState,
     ActionExecutor,
 )
-from engine.check import CheckAssessor, tier_phrase
+from engine.check import CheckAssessor, anyone_else_here, exposed_by_tier, tier_phrase
 from engine.environment import SALIENT_AMBIENT_STRENGTH
 from engine.narration import SAME_PLACE_VERDICT_RULE, ensure_actor_named, observed_here, scene_line
 from engine.scene import (
@@ -139,6 +139,13 @@ def _relief_label(relief: float) -> str:
 # <0.65) and above background agents' perception threshold (0.35). Serious wounds and restraint
 # use SALIENT_AMBIENT_STRENGTH and record as HIGH.
 _LIGHT_VIOLENCE_STRENGTH: float = 0.45
+
+
+def _covert_note(detected: bool) -> str:
+    """Read beside the tier: whether hands meant to go unseen were seen is the code's ruling."""
+    if detected:
+        return "\n（这一动是瞒着人下的手，却被在场的人看破了：outcome 与 fact 照实写出他做了什么、怎么露的馅。）"
+    return "\n（这一动是瞒着人下的手，在场没有人察觉：outcome 照实写出他做了什么，并写明无人察觉，不得写成有人看见。）"
 
 
 def _bystander_strength(verdict: "_Verdict") -> float | None:
@@ -355,6 +362,8 @@ class PhysicalExecutor(ActionExecutor):
         amount = getattr(action.intent, "amount", None)
         if amount:
             state.extra["amount"] = amount
+        if getattr(action.intent, "covert", False):
+            state.extra["covert"] = True
         return state
 
     async def _resolve_subject(
@@ -504,11 +513,15 @@ class PhysicalExecutor(ActionExecutor):
     @staticmethod
     def _opponent(
         subject: "_Subject", *, agents: dict[str, "Agent"], environment: "EnvironmentSystem",
+        covert: bool = False,
     ) -> "Agent | None":
         """Who can resist the act: the person it lands on, or whoever is holding the thing it
-        takes. Not a handover's recipient: taking it or not is his choice, not a contest."""
+        takes. Not a handover's recipient: taking it or not is his choice, not a contest, unless
+        it is slipped onto him unseen, when whether he notices is the contest."""
         if subject.is_person:
             return subject.target_agent
+        if covert and subject.recipient_agent is not None:
+            return subject.recipient_agent
         holder = subject.prior_owner_id
         if holder is None or subject.actor_holds:
             return None
@@ -614,16 +627,25 @@ class PhysicalExecutor(ActionExecutor):
         if subject.item is not None and subject.item.is_money:
             stake = min(int(state.extra.get("amount") or subject.item.quantity), subject.item.quantity)
             recipient_line += f"\n- 涉及钱数：{environment.economy.amount_text(stake)}"
+        # Unseen hands, on a thing only: nobody learns of it unless the roll exposes him.
+        covert = bool(state.extra.get("covert")) and subject.item is not None
+        if covert:
+            recipient_line += "\n- 暗中下手：他要瞒着在场的人"
 
         check = (
             await self._checks.assess(
                 agent, action_type=ActionType.PHYSICAL, intent=description, scene=scene,
                 step=step, expected_outcome=state.expected_outcome,
                 target_block=subject.target_block, details=recipient_line,
-                opponent=self._opponent(subject, agents=agents, environment=environment),
+                opponent=self._opponent(subject, agents=agents, environment=environment, covert=covert),
             )
             if agent is not None else None
         )
+        # Code decides whether he was seen, so the narration and who learns of it agree.
+        detected = covert and check is not None and exposed_by_tier(
+            check.tier, watched=anyone_else_here(environment, agent_id),
+        )
+        unseen = covert and not detected
         verdict = (
             await self._judge(
                 agent,
@@ -640,6 +662,7 @@ class PhysicalExecutor(ActionExecutor):
                 recipient_line=recipient_line,
                 step=step,
                 stake=stake,
+                covert_note=_covert_note(detected) if covert else "",
             )
             if check is not None else None
         )
@@ -653,6 +676,8 @@ class PhysicalExecutor(ActionExecutor):
         entity_state_changes = self._declare_entity_change(
             verdict, subject, location=location, environment=environment,
         )
+        if unseen:
+            entity_state_changes = [replace(change, perception="") for change in entity_state_changes]
         counterpart_id, counterpart_agent = self._resolve_counterpart(
             verdict, subject, agents=agents, environment=environment,
         )
@@ -664,7 +689,8 @@ class PhysicalExecutor(ActionExecutor):
                 relation_updates = [(counterpart_id, *delta)]
 
         target_effects: list[TargetAgentEffect] = []
-        if counterpart_agent is not None:
+        # Robbed or planted on unseen, he doesn't know yet; he finds out when he looks.
+        if counterpart_agent is not None and not unseen:
             target_effects.append(await self._counterpart_effect(
                 verdict, subject, counterpart_agent, step=step, economy=environment.economy,
             ))
@@ -720,7 +746,7 @@ class PhysicalExecutor(ActionExecutor):
             action=stub,
             expected_outcome=state.expected_outcome,
             outcome=outcome,       # 3p full authority
-            observations=observed_here(
+            observations=[] if unseen else observed_here(
                 environment, agent_id, outcome, strength=_bystander_strength(verdict),
             ),
             succeeded=verdict.success,
@@ -735,6 +761,7 @@ class PhysicalExecutor(ActionExecutor):
             entity_state_changes=entity_state_changes,
             deed=verdict.deed.value,  # what he was seen doing — carried even when he failed
             check=check.record,
+            detected=detected,
         )]
 
     async def tick(
@@ -845,6 +872,7 @@ class PhysicalExecutor(ActionExecutor):
         recipient_line: str,
         step: int,
         stake: int = 0,
+        covert_note: str = "",
     ) -> "_Verdict | None":
         """Neutral third-party adjudication of the world facts of a settled ``tier``. Returns
         ``None`` when adjudication can't happen (LLM failure, missing actor), so the caller
@@ -1030,7 +1058,7 @@ class PhysicalExecutor(ActionExecutor):
 - 意图：{description}{expected_part}{recipient_line}
 
 【已定结果】
-{tier_phrase(tier, voice=SituationVoice.THIRD)}{stake_note}
+{tier_phrase(tier, voice=SituationVoice.THIRD)}{stake_note}{covert_note}
 
 依上面说定的 JSON 格式给出裁决（reason 在前），只输出 JSON、不写任何多余内容。"""
         # Same source as the user message above: every fact this adjudication can see.

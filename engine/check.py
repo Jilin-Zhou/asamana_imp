@@ -31,6 +31,7 @@ from core.prompts import SituationVoice, condition_line, vitality_line
 
 if TYPE_CHECKING:
     from agent.agent import Agent
+    from engine.environment import EnvironmentSystem
 
 logger = get_logger(__name__)
 
@@ -111,6 +112,20 @@ def tier_phrase(tier: CheckTier, *, voice: SituationVoice) -> str:
     """The tier in words, the only form in which a check reaches a prompt."""
     phrases = _FIRST_PERSON_PHRASES if voice == SituationVoice.FIRST else _THIRD_PERSON_PHRASES
     return phrases[tier]
+
+
+def exposed_by_tier(tier: CheckTier, *, watched: bool) -> bool:
+    """Whether an act meant to go unseen was seen: exposure is the price of a costly success and
+    part of the mess of a critical failure, and only when someone else is there to notice. With
+    nobody around, those tiers cost something else."""
+    return watched and tier in (CheckTier.COSTLY_SUCCESS, CheckTier.CRITICAL_FAILURE)
+
+
+def anyone_else_here(environment: "EnvironmentSystem", actor_id: str) -> bool:
+    """Whether another agent shares the actor's place. Npcs don't count: nothing they see goes
+    anywhere."""
+    location_id = environment.get_body_location(actor_id)
+    return any(aid != actor_id for aid in environment.agents_at(location_id)) if location_id else False
 
 
 #: How each kind of act is named to the assessor.

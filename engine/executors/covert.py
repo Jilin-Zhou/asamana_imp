@@ -13,7 +13,7 @@ from core.logging import get_logger
 from core.prompts import (
     CLOSED_WORLD_FACT_RULE, MEMORY_ORDER_HINT, SituationVoice, condition_line, recency_prefix,
 )
-from engine.check import CheckAssessor, CheckVerdict
+from engine.check import CheckAssessor, CheckVerdict, anyone_else_here, exposed_by_tier
 from engine.environment import SALIENT_AMBIENT_STRENGTH
 from core.duration import describe_duration
 from core.context import GivenFacts, annotate_call
@@ -46,7 +46,7 @@ class CovertExecutor(ActionExecutor):
     what it gains lands only in the actor's memory.
 
     One check settles both how well he caught what went on and whether he was seen
-    (``_detected_by_tier``): exposure is the cost of a costly success and the mess of a critical
+    (``exposed_by_tier``): exposure is the cost of a costly success and the mess of a critical
     failure, and only when someone is there to notice. achieved (``succeeded``) still needs the
     judge to find something in ``_happenings``: it means "learned something he couldn't otherwise
     get", not "finished lurking", and the best roll in an empty room learns nothing.
@@ -136,7 +136,7 @@ class CovertExecutor(ActionExecutor):
         check = await self._assess(
             agent, state, scene=scene, duration_label=duration_label, step=step,
         )
-        watched = self._watched(environment, state.initiator_id)
+        watched = anyone_else_here(environment, state.initiator_id)
         verdict = (
             await self._judge(
                 agent,
@@ -230,7 +230,7 @@ class CovertExecutor(ActionExecutor):
                     agent,
                     check=check,
                     watched=(
-                        self._watched(environment, state.initiator_id)
+                        anyone_else_here(environment, state.initiator_id)
                         if environment is not None else False
                     ),
                     purpose=state.purpose,
@@ -336,20 +336,6 @@ class CovertExecutor(ActionExecutor):
         )
 
     @staticmethod
-    def _watched(environment: "EnvironmentSystem", actor_id: str) -> bool:
-        """Whether anyone here could notice him: another agent at his place. Npcs don't count:
-        nothing they see goes anywhere."""
-        location_id = environment.get_body_location(actor_id)
-        return any(aid != actor_id for aid in environment.agents_at(location_id)) if location_id else False
-
-    @staticmethod
-    def _detected_by_tier(tier: CheckTier, watched: bool) -> bool:
-        """Exposure is the price of a costly success and part of the mess of a critical failure,
-        and only when someone is there to notice; with nobody around, those tiers cost him
-        completeness instead (see ``_catch_line``)."""
-        return watched and tier in (CheckTier.COSTLY_SUCCESS, CheckTier.CRITICAL_FAILURE)
-
-    @staticmethod
     def _catch_line(tier: CheckTier, watched: bool) -> str:
         """How much of what went on he caught, in words for the judge."""
         if tier == CheckTier.CRITICAL_SUCCESS:
@@ -418,7 +404,7 @@ class CovertExecutor(ActionExecutor):
             agent.personality.state.condition, voice=SituationVoice.THIRD,
             now_step=now_step, seconds_per_step=self._seconds_per_step,
         )
-        detected = self._detected_by_tier(check.tier, watched)
+        detected = exposed_by_tier(check.tier, watched=watched)
         settled = (
             f"- 所得：{self._catch_line(check.tier, watched)}\n"
             + (

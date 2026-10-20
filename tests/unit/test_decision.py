@@ -1349,6 +1349,21 @@ def test_a_handover_needs_both_the_thing_and_the_hand(container: object) -> None
     assert [r.id for r in also_named.target.reaches] == ["agent-2"]
 
 
+def test_only_a_thing_can_be_worked_on_unseen(container: object) -> None:
+    """Stealing and planting ride the entity channel; hands laid on a person are always felt."""
+    engine = _make_engine(container)
+    packet = _make_packet(
+        visible_agent_ids=["agent-2"],
+        visible_entities=[VisibleEntity(entity_id="seal", name="印玺", entity_type="item")],
+    )
+    on_thing = _sel(engine, {"physical_entity_index": 1, "physical_covert": True}, ActionType.PHYSICAL, packet)
+    assert on_thing is not None and on_thing.covert
+    on_person = _sel(engine, {"physical_person_index": 1, "physical_covert": True}, ActionType.PHYSICAL, packet)
+    assert on_person is not None and not on_person.covert
+    in_the_open = _sel(engine, {"physical_entity_index": 1}, ActionType.PHYSICAL, packet)
+    assert in_the_open is not None and not in_the_open.covert
+
+
 def test_a_carried_body_must_be_here_and_never_costs_the_whole_beat(container: object) -> None:
     """Carrying is an extra on top of a move: absent or out-of-range indices are ignored one by
     one, and the move itself still stands."""
