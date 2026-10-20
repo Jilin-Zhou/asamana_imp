@@ -60,3 +60,27 @@ def test_non_events_and_interrupts_are_counted_apart() -> None:
     assert list(stats["tiers"]) == [
         "critical_success", "success", "costly_success", "failure", "critical_failure",
     ]
+
+
+def _world(step: int, purses: dict[str, int], ring_with: str) -> WorldSnapshot:
+    states: dict[str, Any] = {
+        f"money_{holder}": {"entity_type": "money", "presence": "held", "presence_ref": holder, "quantity": n}
+        for holder, n in purses.items()
+    }
+    states["ring"] = {"entity_type": "item", "presence": "held", "presence_ref": ring_with}
+    snap = _snap(step)
+    snap.metadata = {"environment": {"entity_states": states}}
+    return snap
+
+
+def test_what_changed_hands_is_read_off_the_world_between_snapshots() -> None:
+    stats = action_stats([
+        _world(2, {"a": 10, "b": 20}, ring_with="a"),
+        _world(0, {"a": 30}, ring_with="b"),
+        _snap(1),  # saved no world state: skipped, not read as everything vanishing
+    ])
+    assert stats["holdings"] == {"money_moved": 20, "things_moved": 1}
+
+
+def test_a_run_without_world_state_moved_nothing() -> None:
+    assert action_stats([_snap(1), _snap(2)])["holdings"] == {"money_moved": 0, "things_moved": 0}
