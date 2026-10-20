@@ -1489,3 +1489,35 @@ async def test_llm_emotion_injects_standing_condition_as_backdrop(container: obj
     prompt = "\n".join(m.content for m in mock_provider.call_history[0])
     assert "我此刻的处境：双手被反绑（已持续约1小时）" in prompt
     assert prompt.index("我此刻在朝堂") < prompt.index("我此刻的处境") < prompt.index("【我是谁】")
+
+
+
+@pytest.mark.asyncio
+async def test_only_his_own_missed_aim_is_a_setback(container: object) -> None:
+    """A missed aim counts toward "switch approach" only for the act he set out on himself, and
+    the same matter working ends the run."""
+    from dataclasses import replace
+
+    from core.interfaces.action import Ref
+
+    agent = _make_agent(container)
+    action = AgentAction(
+        action_type=ActionType.TALK, action_description="我问父亲可肯放我出城", agent_id="agent-1",
+        target=ActionTarget(acts_on=[Ref.agent("agent-2")]), step=3,
+    )
+    missed = ActionResult(
+        action=action, expected_outcome="", outcome="李世民问父亲可肯放他出城，父亲不肯。",
+        succeeded=False, factual_memory="我问父亲可肯放我出城，他不肯。",
+    )
+    # Drawn into someone else's talk: not his aim to miss.
+    await agent._apply_feedback(result=missed, dominant_need=NeedType.SOCIAL, emotion=_neutral_emotion())  # noqa: SLF001
+    assert agent.memory_system.recent_setbacks(3) == []
+
+    agent._own_matter = ("talk", "agent-2")  # noqa: SLF001 — he set out on this himself
+    await agent._apply_feedback(result=missed, dominant_need=NeedType.SOCIAL, emotion=_neutral_emotion())  # noqa: SLF001
+    (line,) = agent.memory_system.recent_setbacks(3)
+    assert line.endswith("我问父亲可肯放我出城——没能如愿。")
+
+    worked = replace(missed, succeeded=True)
+    await agent._apply_feedback(result=worked, dominant_need=NeedType.SOCIAL, emotion=_neutral_emotion())  # noqa: SLF001
+    assert agent.memory_system.recent_setbacks(3) == []

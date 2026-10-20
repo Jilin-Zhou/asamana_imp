@@ -60,6 +60,10 @@ RECENT_EVENT_LOOKBACK_STEPS = 10
 # decide reads it, for its "switch approach after repeated failures" instruction. LOOKBACK caps age.
 _FOILED_BUFFER_MAXLEN = 8
 _FOILED_LOOKBACK_STEPS = 5
+# Setbacks (see note_setback): his own acts that happened but missed their aim. A longer window than
+# the foiled one: pressing the same person for the same thing spreads over many beats, and a count
+# that forgets them before the third try never reaches the "switch approach" instruction.
+_SETBACK_LOOKBACK_STEPS = 10
 # Similarity guard (SequenceMatcher.ratio on gist) for merging foiled attempts. The structural key
 # (action_type, target) is the primary merge test, since wording varies; similarity only splits
 # same-key entries that clearly differ. It never merges across keys, so a mis-set value only costs a
@@ -88,6 +92,25 @@ def _normalize_related_agents(
         directory = dict(value)
         return list(directory.keys()), directory
     return list(value), None
+
+
+def _clear_matter(
+    buffer: "deque[tuple[int, str, tuple[str, str] | None, str]]", key: "tuple[str, str]", gist: str,
+) -> None:
+    """Drop a matter's entries: a full key by key alone; an object-less key only where the gist is
+    close enough to be the same act (the merge criterion)."""
+    if not key:
+        return
+    if key[1]:
+        kept = [item for item in buffer if item[2] != key]
+    else:
+        kept = [
+            item for item in buffer
+            if item[2] != key or simple_similarity(item[3], gist) < _FOILED_MERGE_MIN_RATIO_NO_OBJECT
+        ]
+    if len(kept) != len(buffer):
+        buffer.clear()
+        buffer.extend(kept)
 
 
 class MemorySystem:
@@ -161,6 +184,11 @@ class MemorySystem:
         # - key = (action_type, acted_on) is the primary merge criterion; None means no key and the
         #   entry never merges.
         self._recent_foiled: "deque[tuple[int, str, tuple[str, str] | None, str]]" = deque(
+            maxlen=_FOILED_BUFFER_MAXLEN
+        )
+        # Same shape for setbacks: acts that happened (they are also ordinary memories) but missed
+        # their aim. Kept apart so the count reads "tried and failed", never "couldn't even try".
+        self._recent_setbacks: "deque[tuple[int, str, tuple[str, str] | None, str]]" = deque(
             maxlen=_FOILED_BUFFER_MAXLEN
         )
         # Monotonic counter that keeps summary / insight ids unique. Don't use len(_entries): it
@@ -777,19 +805,19 @@ class MemorySystem:
         path / conscripted), so landing the key means the obstacle is gone. An object-less key also
         requires ``gist`` similarity ≥ ``_FOILED_MERGE_MIN_RATIO_NO_OBJECT``.
         """
-        if not key:
-            return
-        if key[1]:
-            kept = [item for item in self._recent_foiled if item[2] != key]
-        else:
-            kept = [
-                item for item in self._recent_foiled
-                if item[2] != key
-                or simple_similarity(item[3], gist) < _FOILED_MERGE_MIN_RATIO_NO_OBJECT
-            ]
-        if len(kept) != len(self._recent_foiled):
-            self._recent_foiled.clear()
-            self._recent_foiled.extend(kept)
+        _clear_matter(self._recent_foiled, key, gist)
+
+    def note_setback(self, *, step: int, text: str, key: "tuple[str, str]", gist: str) -> None:
+        """Record an act of his own that happened but missed its aim. Read only by decide, for the
+        same "switch approach" instruction as foiled attempts; never persisted, since the act is
+        already an ordinary memory."""
+        cleaned = (text or "").strip()
+        if cleaned:
+            self._recent_setbacks.append((step, cleaned, key, (gist or cleaned).strip()))
+
+    def clear_setbacks(self, key: "tuple[str, str]", gist: str = "") -> None:
+        """The same matter finally worked: its run of setbacks is over. Same criterion as merging."""
+        _clear_matter(self._recent_setbacks, key, gist)
 
     def recent_foiled_attempts(
         self, current_step: int, *, window: int = _FOILED_LOOKBACK_STEPS
@@ -813,9 +841,26 @@ class MemorySystem:
         Sort by step explicitly: append order matching step order is only a coincidence of the call
         sites.
         """
+        return self._merged_lines(
+            self._recent_foiled, current_step, window, "近来同一件事我已试过{n}次。",
+        )
+
+    def recent_setbacks(self, current_step: int, *, window: int = _SETBACK_LOOKBACK_STEPS) -> list[str]:
+        """His recent acts that missed their aim, merged and counted like ``recent_foiled_attempts``."""
+        return self._merged_lines(
+            self._recent_setbacks, current_step, window, "近来同一件事我已碰壁{n}次。",
+        )
+
+    def _merged_lines(
+        self,
+        buffer: "deque[tuple[int, str, tuple[str, str] | None, str]]",
+        current_step: int,
+        window: int,
+        count_phrase: str,
+    ) -> list[str]:
         threshold = current_step - window
         recent = sorted(
-            (item for item in self._recent_foiled if item[0] >= threshold),
+            (item for item in buffer if item[0] >= threshold),
             key=lambda item: item[0],
         )
 
@@ -849,7 +894,7 @@ class MemorySystem:
             )
             if group["count"] >= 2:
                 # "Recently", not "in a row": the attempts aren't known to be consecutive.
-                line = f"{line}近来同一件事我已试过{group['count']}次。"
+                line = f"{line}{count_phrase.format(n=group['count'])}"
             out.append(line)
         return out
 
