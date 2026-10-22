@@ -36,17 +36,21 @@ def participant_action_desc(
     """
     if agent_id == exec_state.initiator_id:
         return exec_state.purpose
+    if (joining := exec_state.joined.get(agent_id)) is not None:
+        return joining.description
     initiator_name = directory.agent_name(exec_state.initiator_id)
     # No bracket around the purpose: callers quote this whole line in 「」, so one would nest.
     return f"参与{initiator_name}发起的行动，行动意图：{exec_state.purpose}"
 
 
 def participant_intent(agent_id: str, exec_state: "ActionExecutionState") -> str:
-    """Viewpoint-correct "what I'm after": only the initiator wrote ``expected_outcome``, so
-    anyone else gets "" rather than an invented motive."""
-    if agent_id != exec_state.initiator_id:
-        return ""
-    return format_intent_clause(exec_state.expected_outcome)
+    """Viewpoint-correct "what I'm after": only the initiator and those who joined on their own
+    wrote an expectation, so a conscript gets "" rather than an invented motive."""
+    if agent_id == exec_state.initiator_id:
+        return format_intent_clause(exec_state.expected_outcome)
+    if (joining := exec_state.joined.get(agent_id)) is not None:
+        return format_intent_clause(joining.expected_outcome)
+    return ""
 
 
 def participant_target(agent_id: str, exec_state: "ActionExecutionState") -> "ActionTarget":
@@ -58,6 +62,8 @@ def participant_target(agent_id: str, exec_state: "ActionExecutionState") -> "Ac
     """
     if agent_id == exec_state.initiator_id:
         return exec_state.target
+    if (joining := exec_state.joined.get(agent_id)) is not None:
+        return joining.target
     acts_on = [ref for ref in exec_state.target.acts_on if ref.id != agent_id]
     if not acts_on:
         acts_on = [Ref.agent(exec_state.initiator_id)]
@@ -133,6 +139,24 @@ def action_semantics(action: "AgentAction", result: "ActionResult") -> dict[str,
     }
 
 
+@dataclass(frozen=True)
+class Joining:
+    """Someone who walked into an execution after it started, on his own decision: his act,
+    aim and expectation stay his, not the initiator's (see ``ActionExecutor.join``)."""
+
+    description: str
+    target: ActionTarget
+    expected_outcome: str = ""
+
+
+@dataclass(frozen=True)
+class JoinOpening:
+    """The beat on which someone walks into an execution under way."""
+
+    outcome: str
+    observations: list[Observed]
+
+
 @dataclass
 class ActionExecutionState:
     """
@@ -161,6 +185,8 @@ class ActionExecutionState:
     # Bodies that hear without being enrolled (TALK's listeners). Arbitration, conscription
     # and teardown must read participant_ids alone, so a listener never spends its turn.
     listener_ids: List[str] = field(default_factory=list)
+    # Participants who joined after start, by id; also listed in participant_ids.
+    joined: dict[str, Joining] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -327,6 +353,23 @@ class ActionExecutor(ABC):
         same criteria and wins; arbitration logs a mismatch. Default ``[]``.
         """
         return []
+
+    def admits_joiner(self, parties: int) -> bool:
+        """Whether someone deciding this same act toward a body already inside such an execution
+        of ``parties`` people walks into it instead of being turned away. Default: never."""
+        return False
+
+    def join(
+        self,
+        state: ActionExecutionState,
+        action: AgentAction,
+        step: int,
+        *,
+        environment: "EnvironmentSystem",
+    ) -> JoinOpening | None:
+        """Add ``action``'s actor to ``state`` as a participant (see ``admits_joiner``) and return
+        his opening beat; ``None`` if this execution can't take him."""
+        return None
 
     async def interrupt(
         self,

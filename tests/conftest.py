@@ -94,8 +94,9 @@ def test_config() -> object:
 #             (achieved = what the attempt uncovered, not whether it finished. The `fact` below
 #             reveals nothing: don't use it as an intel sample; intel tests supply their own.)
 #   work:     success / fact / outcome (3p) / why
-#   social:   dialogue[{speaker:1|2, line}] + observation (onlooker view of the whole scene)
-#             + fact / success / relation / why (per-participant self-assessment)
+#   social:   dialogue[{speaker:N, line}] + observation (onlooker view of the whole scene)
+#             + fact / success / relations[{index, relation}] / why (per-participant
+#             self-assessment)
 #
 # The default verdict is the most conservative: success, no damage, neutral relation,
 # undetected. Cases needing another verdict (failure / detected / SEIZE …) override `fixed_response`.
@@ -110,6 +111,7 @@ MOCK_ADJUDICATION_RESPONSE = json.dumps({
     "why": "",
     "observation": "两人说了几句便各自散了。",
     "relation": "neutral",
+    "relations": [{"index": 1, "relation": "neutral"}],
     "actor_damage": 0.0,
     "target_damage": 0.0,
     "new_entity_state": "被动过",

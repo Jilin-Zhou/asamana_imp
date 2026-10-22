@@ -132,11 +132,11 @@ async def test_social_memory_summary_knows_the_speaker_is_bound() -> None:
     """First-person memory after a conversation — embedded and recalled repeatedly later."""
     from engine.executors.social import SocialExecutor
 
-    llm = _Capture('{"fact":"f","success":true,"relation":"neutral","why":""}')
+    llm = _Capture('{"fact":"f","success":true,"relations":[{"index":1,"relation":"neutral"}],"why":""}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     await ex._memory_summary(  # noqa: SLF001
-        agent=_agent(), other_id="a1", other_name="李世民", transcript="……",
-        purpose="求他放我一条生路", fallback_fact="谈了一场。", is_initiator=False, now_step=24,
+        agent=_agent(), others=[("a1", "李世民")], transcript="……", role_line="李世民来找我谈",
+        purpose="求他放我一条生路", fallback_fact="谈了一场。", talk_role="addressee", now_step=24,
     )
     assert MARK in llm.text()
 
@@ -232,9 +232,9 @@ async def test_social_interrupt_summary_knows_the_speaker_is_bound() -> None:
     llm = _Capture('{"fact":"f"}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     await ex._interrupt_summary(  # noqa: SLF001
-        agent=_agent(), other_name="李世民", purpose="替自己分辩", thought="我说不下去了",
-        cause="", elapsed_label="约1小时", is_triggered=True, is_initiator=False, scene="",
-        now_step=24,
+        agent=_agent(), role_line="李世民来找我谈", fallback_head="李世民找我", purpose="替自己分辩",
+        thought="我说不下去了", cause="", elapsed_label="约1小时", is_triggered=True, leaver="对方",
+        talk_role="addressee", scene="", now_step=24,
     )
     assert MARK in llm.text()
 
@@ -244,20 +244,20 @@ async def test_dialogue_transcript_knows_which_speaker_is_bound() -> None:
     """The dialogue transcript is written by a third-person narrator: both people's bodily state
     must be present, or it writes a bound man slamming the table and standing up. One line each;
     giving only one side isn't enough."""
-    from engine.executors.social import SocialExecutor
+    from engine.executors.social import SocialExecutor, _Party, _empty_ctx
 
     llm = _Capture('{"dialogue":[{"speaker":1,"line":"…"}],"observation":"两人谈了一场。"}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
-    empty = {"relation": "", "about_other": "", "about_topic": ""}
     # Each person has a different condition: checking only one stays green even if the other's
     # interpolation slot is deleted.
     limping = BodyCondition(description="右腿有伤", since_step=0)
     await ex._llm_full_dialogue(  # noqa: SLF001
-        initiator=_agent("a1", "李世民", condition=limping),
-        target=_agent("a2", "李元吉"),
-        initiator_name="李世民", target_name="李元吉",
-        purpose="逼问东宫往来", expected_outcome="", turns=2,
-        initiator_ctx=dict(empty), target_ctx=dict(empty), scene="", now_step=24,
+        speakers=[
+            (_agent("a1", "李世民", condition=limping),
+             _Party("a1", "李世民", "initiator", "a2", "逼问东宫往来", ""), _empty_ctx()),
+            (_agent("a2", "李元吉"), _Party("a2", "李元吉", "addressee", "a1", "", ""), _empty_ctx()),
+        ],
+        purpose="逼问东宫往来", expected_outcome="", turns=2, scene="", now_step=24,
     )
     text = llm.text()
     assert MARK in text and "右腿有伤" in text
@@ -267,17 +267,18 @@ async def test_dialogue_transcript_knows_which_speaker_is_bound() -> None:
 async def test_dialogue_leaves_a_free_speaker_unmarked() -> None:
     """The side with no condition omits the whole line — otherwise every conversation hangs a line
     of noise on everyone."""
-    from engine.executors.social import SocialExecutor
+    from engine.executors.social import SocialExecutor, _Party, _empty_ctx
 
     llm = _Capture('{"dialogue":[{"speaker":1,"line":"…"}],"observation":"两人谈了一场。"}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
-    empty = {"relation": "", "about_other": "", "about_topic": ""}
     await ex._llm_full_dialogue(  # noqa: SLF001
-        initiator=_agent("a1", "李世民", condition=None),
-        target=_agent("a2", "李元吉", condition=None),
-        initiator_name="李世民", target_name="李元吉",
-        purpose="议事", expected_outcome="", turns=2,
-        initiator_ctx=dict(empty), target_ctx=dict(empty), scene="", now_step=24,
+        speakers=[
+            (_agent("a1", "李世民", condition=None),
+             _Party("a1", "李世民", "initiator", "a2", "议事", ""), _empty_ctx()),
+            (_agent("a2", "李元吉", condition=None),
+             _Party("a2", "李元吉", "addressee", "a1", "", ""), _empty_ctx()),
+        ],
+        purpose="议事", expected_outcome="", turns=2, scene="", now_step=24,
     )
     assert "此刻的处境" not in llm.text()
 

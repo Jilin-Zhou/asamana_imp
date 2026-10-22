@@ -1417,10 +1417,10 @@ async def test_deeper_starvation_goes_first_between_two_starved_agents(container
 
     arb, _ = await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
     b_exec = rt._executor_registry.get_active_for_agent("agent-b")  # noqa: SLF001
-    assert b_exec is not None and "agent-c" in b_exec.participant_ids
-    a_exec = rt._executor_registry.get_active_for_agent("agent-a")  # noqa: SLF001
-    assert a_exec is not None and a_exec.participant_ids == ["agent-a"]
-    assert "常何正与张婕妤交谈" in a_exec.extra["completed_result"].outcome
+    assert b_exec is not None and b_exec.initiator_id == "agent-b" and "agent-c" in b_exec.participant_ids
+    # The one starved less walks into that conversation rather than starting his own.
+    assert rt._executor_registry.get_active_for_agent("agent-a") is b_exec  # noqa: SLF001
+    assert "agent-a" in b_exec.joined
 
 
 @pytest.mark.asyncio
@@ -1483,7 +1483,7 @@ def test_busy_reason_says_what_the_body_is_visibly_doing(container) -> None:
     busy(ActionType.COVERT, "agent-d")
 
     def reason(pid):
-        return rt._arbiter._busy_reason(pid, {}, {})  # noqa: SLF001
+        return rt._arbiter._busy_reason(pid, {}, {}, {})  # noqa: SLF001
 
     assert reason("agent-a") == "李世民正与常何交谈"
     assert reason("agent-c") == "尉迟恭正在歇息"
@@ -1779,18 +1779,19 @@ async def test_a_body_one_initiator_could_not_take_is_taken_by_the_next(containe
     }
     rt = _arb_runtime(container, world_id, agents, env)
 
-    def talk(actor, other, desc):
-        return AgentAction(agent_id=actor, step=1, action_type=ActionType.TALK, action_description=desc,
+    def talk(actor, other, desc, action_type=ActionType.TALK):
+        return AgentAction(agent_id=actor, step=1, action_type=action_type, action_description=desc,
                            target=ActionTarget(acts_on=[Ref.agent(other)], claims=[Ref.agent(other)]),
                            estimated_steps=1)
 
     a, b, c, d = (agents[k] for k in ids)
     # Initiative: Yuanji, under pressure, goes first; the rest share a tier, in input order Shimin →
-    # Li Yuan → Yuchi.
+    # Li Yuan → Yuchi. The Prince of Qin's handover can't walk into a conversation, so it is turned
+    # away.
     planned = [
         ("main", a, _plan_for(a, talk("agent-a", "agent-c", "向父皇哭诉求救"), env,
                               external_goals=[_pressure(Urgency.CRITICAL)])),
-        ("main", b, _plan_for(b, talk("agent-b", "agent-c", "向父皇陈明元吉谋逆"), env)),
+        ("main", b, _plan_for(b, talk("agent-b", "agent-c", "把兵符呈给父皇", ActionType.TRADE), env)),
         ("main", c, _plan_for(c, talk("agent-c", "agent-b", "质问秦王为何兵戈相向"), env)),
         ("main", d, _plan_for(d, talk("agent-d", "agent-b", "向秦王禀报宫中情形"), env)),
     ]
@@ -1825,7 +1826,7 @@ async def test_a_body_one_initiator_could_not_take_is_taken_by_the_next(containe
 
     await rt._commit_execution(planned, arb, agents)  # noqa: SLF001
     assert any("质问秦王" in t for t in c.memory_system.recent_foiled_attempts(1))
-    assert any("陈明元吉谋逆" in t for t in b.memory_system.recent_foiled_attempts(1))
+    assert any("兵符呈给父皇" in t for t in b.memory_system.recent_foiled_attempts(1))
 
 
 @pytest.mark.asyncio

@@ -1260,7 +1260,7 @@ class TestSocialExecutor:
         results = await executor.complete(state, 3, agents=agents, environment=env, message_system=None)
         dialogue_prompt = _joined(provider.call_history[0])
         assert "【任务】" in dialogue_prompt and "中立的叙事者" in dialogue_prompt
-        assert "speaker 用 1" in dialogue_prompt          # IndexedRef index contract
+        assert "speaker 填说话人编号：1 是甲、2 是乙" in dialogue_prompt   # IndexedRef index contract
         assert "agent-a" not in dialogue_prompt and "agent-b" not in dialogue_prompt
         assert "步" not in dialogue_prompt
         # transcript speakers are mapped to names
@@ -1297,7 +1297,7 @@ class TestSocialExecutor:
         lanes = seen[0]["dialogue_lanes"]
         user = provider.call_history[0][1].content
         assert (lanes["a"]["name"], lanes["b"]["name"]) == ("甲", "乙")
-        assert f"【A：甲】\n{lanes['a']['text']}\n\n【B：乙】\n{lanes['b']['text']}\n" in user
+        assert f"【1：甲】\n{lanes['a']['text']}\n\n【2：乙】\n{lanes['b']['text']}\n" in user
 
     @pytest.mark.asyncio
     async def test_observation_instruction_offers_the_bland_option_without_positive_examples(
@@ -1340,7 +1340,7 @@ class TestSocialExecutor:
         assert "留空" in prompt
         # the three existing prohibitions stay verbatim
         assert "主语不必你写" in prompt
-        assert "绝不可写出任何谈话内容、话题或双方的意图" in prompt
+        assert "绝不可写出任何谈话内容、话题或任何一方的意图" in prompt
         assert "不要写他们心里怎么想" in prompt
 
     @pytest.mark.asyncio
@@ -6379,9 +6379,9 @@ def test_talk_column_carries_the_owners_recent_past_in_order() -> None:
                       stored_content=text, importance=0.5, created_step=step, kind="event")
 
     text = _format_context(
-        {"relation": None, "about_other": [], "about_topic": [],
+        {"others": [{"id": "b", "name": "李建成", "relation": None, "about": []}], "about_topic": [],
          "recent": [fact("m2", "我在玄武门被拦下盘问。", 4), fact("m1", "我出了东宫。", 2)]},
-        "长孙无忌", "李建成", now_step=5, seconds_per_step=3600,
+        "长孙无忌", now_step=5, seconds_per_step=3600,
     )
     assert f"长孙无忌近来的经历（{MEMORY_ORDER_HINT}）" in text
     assert text.index("我出了东宫") < text.index("被拦下盘问")
@@ -6427,7 +6427,7 @@ async def test_talk_recent_past_comes_first_and_the_other_blocks_give_way() -> N
             sample_recent_events=lambda step, top_k: pairs[:top_k],
         ),
     )
-    ctx = await SocialExecutor(None, _directory())._gather_context(agent, "b", "乙", "议事", 5)  # type: ignore[arg-type]
+    ctx = await SocialExecutor(None, _directory())._gather_context(agent, [("b", "乙")], "议事", 5)  # type: ignore[arg-type]
 
     recent_ids = [m.id for m in ctx["recent"]]
     assert recent_ids[0] == "quarrel" and "exp-only" not in recent_ids
@@ -6467,9 +6467,9 @@ async def test_talk_one_failed_recall_does_not_blank_the_other_blocks() -> None:
             sample_recent_events=lambda step, top_k: [(fact, None)],
         ),
     )
-    ctx = await SocialExecutor(None, _directory())._gather_context(agent, "b", "乙", "议事", 5)  # type: ignore[arg-type]
+    ctx = await SocialExecutor(None, _directory())._gather_context(agent, [("b", "乙")], "议事", 5)  # type: ignore[arg-type]
 
-    assert ctx["about_other"] == []
+    assert ctx["others"][0]["about"] == []
     assert [m.id for m in ctx["about_topic"]] == ["t0"]
     assert [m.id for m in ctx["recent"]] == ["r0"]
 
@@ -6490,7 +6490,8 @@ def test_talk_topic_block_never_carries_the_initiators_purpose() -> None:
     )
     # This renders the invitee's (Zhangsun Wuji's) column.
     text = _format_context(
-        {"relation": None, "about_other": [], "about_topic": [unrelated]}, "长孙无忌", "李建成",
+        {"others": [{"id": "b", "name": "李建成", "relation": None, "about": []}],
+         "about_topic": [unrelated]}, "长孙无忌",
         now_step=5, seconds_per_step=3600,
     )
     assert purpose not in text

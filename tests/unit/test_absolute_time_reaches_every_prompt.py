@@ -328,16 +328,17 @@ def test_goal_progress_residue_prompt_carries_the_rule() -> None:
 async def test_dialogue_prompt_carries_the_rule_and_the_clock() -> None:
     """A "明晨" agreed in dialogue goes into both parties' memories, and from then on their
     readings of the same appointment diverge."""
-    from engine.executors.social import SocialExecutor
+    from engine.executors.social import SocialExecutor, _Party
 
     llm = _Capture('{"dialogue":[{"speaker":1,"line":"好"}],"observation":"o"}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     env = _environment_at(agent_ids=("a2", "a3"))
     await ex._llm_full_dialogue(  # noqa: SLF001
-        initiator=_agent("a2", "长孙无忌"), target=_agent("a3", "李世民"),
-        initiator_name="长孙无忌", target_name="李世民",
-        initiator_ctx={}, target_ctx={}, purpose="储位之事",
-        turns=2, now_step=0, expected_outcome="",
+        speakers=[
+            (_agent("a2", "长孙无忌"), _Party("a2", "长孙无忌", "initiator", "a3", "储位之事", ""), {}),
+            (_agent("a3", "李世民"), _Party("a3", "李世民", "addressee", "a2", "", ""), {}),
+        ],
+        purpose="储位之事", turns=2, now_step=0, expected_outcome="",
         scene=_scene_module().assemble_scene_context(
             "a2", environment=env, directory=_directory(),
             visibility=_scene_module().SceneVisibility.GOD,
@@ -381,11 +382,11 @@ async def test_work_self_appraisal_carries_the_rule_and_the_clock() -> None:
 async def test_social_memory_summary_carries_the_rule_and_the_clock() -> None:
     from engine.executors.social import SocialExecutor
 
-    llm = _Capture('{"fact":"f","success":true,"relation":"neutral","why":""}')
+    llm = _Capture('{"fact":"f","success":true,"relations":[{"index":1,"relation":"neutral"}],"why":""}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     await ex._memory_summary(  # noqa: SLF001
-        agent=_agent(), other_id="a3", other_name="李世民", transcript="……",
-        purpose="约定面谈", fallback_fact="谈了一场。", is_initiator=True, now_step=0,
+        agent=_agent(), others=[("a3", "李世民")], transcript="……", role_line="是我主动找李世民谈的",
+        purpose="约定面谈", fallback_fact="谈了一场。", talk_role="initiator", now_step=0,
         environment=_environment_at(agent_ids=("a2", "a3")),
     )
     text = llm.text()

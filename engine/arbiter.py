@@ -24,7 +24,8 @@ from core.prompts import strip_end_punct
 from engine.clock import GlobalClock
 from engine.execution_processor import ExecutionProcessor
 from engine.executors.base import (
-    ActionExecutionState, ActionExecutor, Conscription, participant_action_desc, participant_target,
+    ActionExecutionState, ActionExecutor, Conscription, JoinOpening, participant_action_desc,
+    participant_target,
 )
 from engine.executors.registry import ActionExecutorRegistry
 from engine.message_system import MessageSystem
@@ -67,6 +68,19 @@ class ArbitratedAction:
     message_ids: List[str] = field(default_factory=list)
     ongoing_execution_id: str | None = None  # None means immediate completion
     is_passive_join: bool = False
+
+
+@dataclass(frozen=True)
+class _Join:
+    """A body walking up to someone inside an execution of the same act, to join it (see
+    ``ActionExecutor.admits_joiner``). Booked at adjudication, landed after every admission."""
+
+    # Whom he went up to; whatever execution that body is in at landing is the one joined.
+    host_body: str
+    # The host's identity in the books: this step's admission owner, or the ongoing execution id.
+    host_key: str
+    # Why he is turned away after all if the host is gone by landing.
+    reason: str
 
 
 @dataclass
@@ -223,10 +237,10 @@ class ExecutionArbiter:
         ``ExecutionProcessor.teardown_with_writeback``, i.e. in the feedback layer.
         """
         plans_by_id = {plan.agent_id: plan for _phase, _agent, plan in planned_steps}
-        admissions, claimed_by, denied = self._resolve(
+        admissions, claimed_by, joins, denied = self._resolve(
             planned_steps, plans_by_id, agents_dict, step, in_progress_at_step_start,
         )
-        return await self._enact(admissions, claimed_by, denied, plans_by_id, agents_dict, step)
+        return await self._enact(admissions, claimed_by, joins, denied, plans_by_id, agents_dict, step)
 
     def _resolve(
         self,
@@ -235,13 +249,13 @@ class ExecutionArbiter:
         agents_dict: Dict[str, "Agent"],
         step: int,
         in_progress_at_step_start: set[str],
-    ) -> tuple[dict[str, _Admission], dict[str, str], dict[str, str]]:
-        """Adjudication: who is admitted, whom they enlist, who is rejected. Pure bookkeeping;
-        the world and registry it reads are as of step start.
+    ) -> tuple[dict[str, _Admission], dict[str, str], dict[str, _Join], dict[str, str]]:
+        """Adjudication: who is admitted, whom they enlist, who walks into an act under way, who
+        is rejected. Pure bookkeeping; the world and registry it reads are as of step start.
 
-        Returns ``(admissions, claimed_by, denied)``: admissions in adjudication order (which is
-        landing order); ``claimed_by`` maps enlisted → initiator; ``denied`` maps rejected →
-        reason.
+        Returns ``(admissions, claimed_by, joins, denied)``: admissions in adjudication order
+        (which is landing order); ``claimed_by`` maps enlisted → initiator; ``joins`` maps a
+        body joining an execution under way → its booking; ``denied`` maps rejected → reason.
 
         Walks ``planned_steps`` in initiative order. Two gates:
 
@@ -260,13 +274,19 @@ class ExecutionArbiter:
 
         When COMPEL hits an action admitted earlier this step, that admission is revoked: its
         initiator is rejected, its other bodies freed and re-queued at the back, along with
-        those it had turned away. Each agent is re-queued at most once, so the walk ends.
+        those it had turned away and those booked to walk into it. Each agent is re-queued at
+        most once, so the walk ends.
+
+        An INVITE that finds its body inside an execution of the same act walks into it when
+        the executor admits another party (``_join_for``), rather than being rejected. A joiner
+        spends his turn but enlists nobody, so COMPEL taking him only drops his booking.
 
         Not handled: item/location contention among independent immediate actions, and joint
         resolution of symmetric mutual actions (they need a resource ledger with no consumer yet).
         """
         admissions: dict[str, _Admission] = {}
         claimed_by: dict[str, str] = {}
+        joins: dict[str, _Join] = {}
         denied: dict[str, str] = {}
         # Rejected-as-busy → the bodies that blocked them; revoking those makes the reason false.
         blocked_by: dict[str, set[str]] = {}
@@ -275,6 +295,20 @@ class ExecutionArbiter:
         queue: deque[AgentStepPlan] = deque(plan for _p, _a, plan in self._initiative_order(planned_steps))
         reached: set[str] = set()
         requeued: set[str] = set()
+
+        def release_joins(host_key: str) -> None:
+            """Unbook those walking into a host that won't be there: each is adjudicated again,
+            or turned away if already re-queued once."""
+            for pid, join in list(joins.items()):
+                if join.host_key != host_key:
+                    continue
+                del joins[pid]
+                consumed.discard(pid)
+                if pid in requeued:
+                    denied[pid] = join.reason
+                else:
+                    requeued.add(pid)
+                    queue.append(plans_by_id[pid])
 
         def revoke(owner: str, *, seized: set[str], by: str) -> list[str]:
             """Revoke the action owner admitted this step; return the bodies it would have torn
@@ -307,6 +341,7 @@ class ExecutionArbiter:
                     del denied[pid], blocked_by[pid]
                     requeued.add(pid)
                     queue.append(plans_by_id[pid])
+            release_joins(owner)
             logger.info(
                 "admission_revoked",
                 extra={
@@ -386,6 +421,20 @@ class ExecutionArbiter:
             # "no rejection ⟹ COMPEL": a new rejection reason or mode would then silently tear down
             # for non-compulsory actions.
             seize = bool(committed) and mode is Conscription.COMPEL
+            if committed and not seize and not unresponsive:
+                join = self._join_for(plan.action, executor, committed, admissions, claimed_by, joins)
+                if join is not None:
+                    joins[agent_id] = join
+                    consumed.add(agent_id)
+                    logger.info(
+                        "execution_join_booked",
+                        extra={
+                            "step": step, "agent_id": agent_id,
+                            "action_type": plan.action.action_type.value,
+                            "host_body": join.host_body,
+                        },
+                    )
+                    continue
             # Rejected agents don't enter consumed: looking "busy" would give later agents a false
             # reason and turn one contention failure into two.
             if unresponsive or (committed and not seize):
@@ -394,7 +443,7 @@ class ExecutionArbiter:
                     denied[agent_id] = f"{names}毫无回应"
                 else:
                     denied[agent_id] = "，".join(
-                        self._busy_reason(pid, admissions, claimed_by) for pid in committed
+                        self._busy_reason(pid, admissions, claimed_by, joins) for pid in committed
                     )
                     blocked_by[agent_id] = set(committed)
                 logger.info(
@@ -418,11 +467,18 @@ class ExecutionArbiter:
             if seize:
                 seized = set(committed)
                 for pid in committed:
+                    # Booked to walk into something that hasn't landed: nothing to tear down.
+                    if joins.pop(pid, None) is not None:
+                        continue
                     owner = claimed_by.get(pid) or (pid if pid in admissions else None)
                     if owner is not None and owner in admissions:
                         to_tear_down.extend(revoke(owner, seized=seized, by=agent_id))
                     elif owner is None:
                         to_tear_down.append(pid)
+                        # Tearing him out ends that execution, so nobody walks into it.
+                        ongoing = self._executor_registry.get_active_for_agent(pid)
+                        if ongoing is not None:
+                            release_joins(ongoing.execution_id)
 
             admissions[agent_id] = _Admission(
                 plan=plan, action=plan.action, executor=executor,
@@ -433,19 +489,53 @@ class ExecutionArbiter:
                 claimed_by[pid] = agent_id
                 consumed.add(pid)
 
-        return admissions, claimed_by, denied
+        return admissions, claimed_by, joins, denied
+
+    def _join_for(
+        self,
+        action: AgentAction,
+        executor: ActionExecutor,
+        committed: list[str],
+        admissions: dict[str, _Admission],
+        claimed_by: dict[str, str],
+        joins: dict[str, _Join],
+    ) -> _Join | None:
+        """The booking for walking into the execution ``committed`` is in, or ``None`` if it is
+        another act or its executor admits nobody more. Party size counts those already booked;
+        someone booked to walk in himself is met in the execution he is walking into."""
+        if len(committed) != 1:
+            return None
+        reason = self._busy_reason(committed[0], admissions, claimed_by, joins)
+        body = joins[committed[0]].host_body if committed[0] in joins else committed[0]
+        owner = claimed_by.get(body) or (body if body in admissions else None)
+        if owner is not None:
+            adm = admissions[owner]
+            if adm.action.action_type is not action.action_type:
+                return None
+            host_key, parties = owner, 1 + len(adm.co_participants)
+        else:
+            ongoing = self._executor_registry.get_active_for_agent(body)
+            if ongoing is None or ongoing.action_type is not action.action_type:
+                return None
+            host_key, parties = ongoing.execution_id, len(ongoing.participant_ids)
+        parties += sum(1 for join in joins.values() if join.host_key == host_key)
+        if not executor.admits_joiner(parties):
+            return None
+        return _Join(host_body=body, host_key=host_key, reason=reason)
 
     async def _enact(
         self,
         admissions: dict[str, _Admission],
         claimed_by: dict[str, str],
+        joins: dict[str, _Join],
         denied: dict[str, str],
         plans_by_id: dict[str, AgentStepPlan],
         agents_dict: Dict[str, "Agent"],
         step: int,
     ) -> tuple[dict[str, ArbitratedAction], list[dict[str, Any]]]:
         """Land admissions in adjudication order: tear down the seized old tasks, then start,
-        then emit records; rejections are booked last.
+        then emit records; walk-ins land next, into whatever their host is in by then, and
+        rejections are booked last.
 
         Feasibility checks inside start() see the world as changed by earlier admissions.
         """
@@ -552,6 +642,29 @@ class ExecutionArbiter:
                 )
                 arbitration[pid] = self._passive_join_arbitrated(pid_plan, exec_state)
 
+        for agent_id, join in joins.items():
+            plan = plans_by_id[agent_id]
+            host = self._executor_registry.get_active_for_agent(join.host_body)
+            executor = self._executor_registry.get_executor(plan.action.action_type)
+            opening: JoinOpening | None = None
+            # A host whose start() failed carries its failure and is no conversation to join.
+            if (
+                host is not None and executor is not None
+                and host.action_type is plan.action.action_type
+                and ActionExecutor._stored_result(host) is None
+            ):
+                try:
+                    opening = executor.join(host, plan.action, step, environment=self._environment)
+                except Exception as exc:  # noqa: BLE001 — Rule 5: an executor exception must not kill the run
+                    logger.error(
+                        "executor_join_failed",
+                        extra={"step": step, "agent_id": agent_id, "error": str(exc)},
+                    )
+            if opening is None:
+                denied[agent_id] = join.reason
+                continue
+            arbitration[agent_id] = self._join_arbitrated(plan, host, opening)
+
         # Denials last, once enlistment is settled: one verdict per body per step, and an enlisted
         # body gets the join record.
         for agent_id, reason in denied.items():
@@ -622,6 +735,31 @@ class ExecutionArbiter:
             is_passive_join=False,
         )
 
+    def _join_arbitrated(
+        self,
+        plan: AgentStepPlan,
+        exec_state: ActionExecutionState,
+        opening: JoinOpening,
+    ) -> ArbitratedAction:
+        """The record of a body walking into an execution under way. His own decision, so not a
+        passive join: the act and target are the ones he chose."""
+        return ArbitratedAction(
+            agent_id=plan.agent_id,
+            action_result=ActionResult(
+                action=plan.action,
+                expected_outcome=plan.action.expected_outcome,
+                outcome=opening.outcome,
+                observations=list(opening.observations),
+                succeeded=True,
+                factual_memory="",
+            ),
+            location_id=self._environment.get_body_location(plan.agent_id),
+            visible_agent_ids=list(plan.spatial.visible_agent_ids),
+            message_ids=[m.id for m in plan.inbox],
+            ongoing_execution_id=exec_state.execution_id,
+            is_passive_join=False,
+        )
+
     def _passive_join_arbitrated(
         self,
         plan: AgentStepPlan,
@@ -683,24 +821,29 @@ class ExecutionArbiter:
 
     def _busy_reason(
         self, pid: str, admissions: dict[str, _Admission], claimed_by: dict[str, str],
+        joins: dict[str, _Join],
     ) -> str:
         """What X is doing, as the rejected agent sees it (see _BUSY_WITH).
 
-        Read from the books for this step's admissions, else the registry; an execution that
-        finished on the step-start tick falls back to the vague phrase.
+        Read from the books for this step's admissions and walk-ins, else the registry; an
+        execution that finished on the step-start tick falls back to the vague phrase.
         """
         name = self._directory.agent_name(pid)
-        owner = claimed_by.get(pid) or (pid if pid in admissions else None)
+        host = joins[pid].host_body if pid in joins else pid
+        owner = claimed_by.get(host) or (host if host in admissions else None)
         if owner is not None:
             adm = admissions[owner]
             action_type = adm.action.action_type
             members = [owner, *adm.co_participants]
+            key = owner
         else:
-            exec_state = self._executor_registry.get_active_for_agent(pid)
+            exec_state = self._executor_registry.get_active_for_agent(host)
             if exec_state is None:
                 return f"{name}{_BUSY_UNSEEN}"
             action_type = exec_state.action_type
             members = list(exec_state.participant_ids)
+            key = exec_state.execution_id
+        members += [j for j, join in joins.items() if join.host_key == key]
         if action_type == ActionType.TALK:
             partners = [p for p in members if p != pid]
             if partners:

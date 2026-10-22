@@ -17,7 +17,7 @@ from core.logging import get_logger
 from core.prompts import ABSOLUTE_TIME_RULE, CLOSED_WORLD_FACT_RULE, SituationVoice, condition_line
 from engine.executors.base import ActionExecutionState, participant_action_desc
 from engine.executors.social import (
-    _DIRECTION_TALK_DELTAS, _EMPTY_CTX, SocialExecutor, _format_context, _talk_target,
+    _DIRECTION_TALK_DELTAS, SocialExecutor, _empty_ctx, _format_context, _talk_target,
 )
 from engine.narration import observed_here, scene_line
 from engine.scene import SceneVisibility, assemble_scene_context, observe_location
@@ -86,7 +86,8 @@ class TradeExecutor(SocialExecutor):
     the deal: the narrator rules whether it was struck and for how much, and the exchange lands
     as one ``Transfer`` set on the initiator's result, whole or not at all.
 
-    No roll: whether B agrees is B's own will, never a die.
+    No roll: whether B agrees is B's own will, never a die. A deal is between two people:
+    nobody walks into one under way.
     """
 
     def __init__(
@@ -97,6 +98,9 @@ class TradeExecutor(SocialExecutor):
             llm_router, directory, seconds_per_step, world_start_second_of_day=world_start_second_of_day,
         )
         self._economy = economy if economy is not None else Economy()
+
+    def admits_joiner(self, parties: int) -> bool:
+        return False
 
     async def start(
         self,
@@ -190,14 +194,14 @@ class TradeExecutor(SocialExecutor):
         verdict = None
         if a is not None and b is not None:
             a_ctx_r, b_ctx_r = await asyncio.gather(
-                self._gather_context(a, b_id, b_name, state.purpose, step),
-                self._gather_context(b, a_id, a_name, state.purpose, step),
+                self._gather_context(a, [(b_id, b_name)], state.purpose, step),
+                self._gather_context(b, [(a_id, a_name)], state.purpose, step),
                 return_exceptions=True,
             )
             verdict = await self._haggle(
                 a=a, b=b, a_name=a_name, b_name=b_name, purpose=state.purpose, terms=terms,
-                a_ctx=dict(_EMPTY_CTX) if isinstance(a_ctx_r, BaseException) else a_ctx_r,
-                b_ctx=dict(_EMPTY_CTX) if isinstance(b_ctx_r, BaseException) else b_ctx_r,
+                a_ctx=_empty_ctx() if isinstance(a_ctx_r, BaseException) else a_ctx_r,
+                b_ctx=_empty_ctx() if isinstance(b_ctx_r, BaseException) else b_ctx_r,
                 a_purse=a_purse, b_purse=b_purse, environment=environment, agents=agents, step=step,
             )
 
@@ -230,16 +234,18 @@ class TradeExecutor(SocialExecutor):
             location, f"{words.seen}{bystander}" if bystander else words.seen,
         ))
 
+        parties = self._parties(state)
         summary_a, summary_b = await asyncio.gather(
             self._memory_summary(
-                agent=a, other_id=b_id, other_name=b_name, transcript=record, purpose=state.purpose,
-                fallback_fact=words.a_fact, is_initiator=True, now_step=step,
-                environment=environment, expected_outcome=state.expected_outcome,
+                agent=a, others=[(b_id, b_name)], transcript=record, purpose=state.purpose,
+                role_line=self._role_line(parties, 0)[0], fallback_fact=words.a_fact,
+                talk_role="initiator", now_step=step, environment=environment,
+                expected_outcome=state.expected_outcome,
             ),
             self._memory_summary(
-                agent=b, other_id=a_id, other_name=a_name, transcript=record, purpose=state.purpose,
-                fallback_fact=words.b_fact, is_initiator=False, now_step=step,
-                environment=environment,
+                agent=b, others=[(a_id, a_name)], transcript=record, purpose=state.purpose,
+                role_line=self._role_line(parties, 1)[0], fallback_fact=words.b_fact,
+                talk_role="addressee", now_step=step, environment=environment,
             ),
             return_exceptions=True,
         )
@@ -328,9 +334,9 @@ class TradeExecutor(SocialExecutor):
         """The haggling and its ruling in one functional call: ``(dialogue, agreed, give_money,
         ask_money, reason, observation)``, or ``None`` when it can't happen (a null step)."""
         lanes = []
-        for agent, ctx, name, other in ((a, a_ctx, a_name, b_name), (b, b_ctx, b_name, a_name)):
+        for agent, ctx, name in ((a, a_ctx, a_name), (b, b_ctx, b_name)):
             ctx_text = _format_context(
-                ctx, name, other, now_step=step, seconds_per_step=self._seconds_per_step,
+                ctx, name, now_step=step, seconds_per_step=self._seconds_per_step,
                 world_start_second_of_day=self._world_start_second_of_day,
             )
             condition = condition_line(
@@ -383,7 +389,7 @@ class TradeExecutor(SocialExecutor):
         except Exception as exc:
             logger.warning("trade_haggle_failed", extra={"agent_id": a.agent_id, "step": step, "error": str(exc)})
             return None
-        dialogue = self._parse_dialogue(data, (a.agent_id, a_name), (b.agent_id, b_name))
+        dialogue = self._parse_dialogue(data, [(a.agent_id, a_name), (b.agent_id, b_name)])
         if not dialogue:
             logger.warning("trade_dialogue_unattributable", extra={"agent_id": a.agent_id, "step": step})
             return None
@@ -412,7 +418,7 @@ class TradeExecutor(SocialExecutor):
         step: int,
         state: ActionExecutionState,
         outcome: str,
-        summary: "tuple[str, bool, str, str] | None",
+        summary: "tuple[str, bool, dict[str, str], str] | None",
         gist: str = "",
         dialogue: list[dict],
         observations: list,
@@ -435,8 +441,8 @@ class TradeExecutor(SocialExecutor):
                 action=stub, expected_outcome=expected, outcome=outcome, observations=observations,
                 succeeded=False, dialogue=dialogue, adjudication_failed=True,
             )
-        fact, _felt_success, direction, _felt_why = summary
-        td, ad = _DIRECTION_TALK_DELTAS.get(direction, _DIRECTION_TALK_DELTAS["neutral"])
+        fact, _felt_success, directions, _felt_why = summary
+        td, ad = _DIRECTION_TALK_DELTAS.get(directions.get(other_id, "neutral"), _DIRECTION_TALK_DELTAS["neutral"])
         return ActionResult(
             action=stub,
             expected_outcome=expected,
