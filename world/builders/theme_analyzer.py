@@ -94,6 +94,7 @@ _THEME_PROMPT_SCHEMA = {
                 "price": "<整数：按上面的单位计的大致价钱>",
             }
         ],
+        "daily_cost": "<整数：一个寻常人一天吃住的大致花销，按上面的单位计>",
     },
     "key_figures": [
         {
@@ -259,10 +260,10 @@ _THEME_TOKENS_PER_FIGURE = 200
 _THEME_TOKENS_PER_RELATION = 122
 _THEME_TOKENS_HISTORICAL = 124 * 6
 _THEME_TOKENS_SEEDS = 320 * 10
-#   climate + economy  ~202                  (climate enum 5 + currency ≤4 chars 6 + unit 3
+#   climate + economy  ~210                  (climate enum 5 + currency ≤4 chars 6 + unit 3
 #                                             + prices ≤6 × (item ≤10 chars 15 + price 3 + structure 10)
-#                                             + 2 top-level keys and 3 inner fields 25)
-_THEME_TOKENS_ECONOMY_CLIMATE = 202
+#                                             + daily_cost 3 + 2 top-level keys and 4 inner fields 30)
+_THEME_TOKENS_ECONOMY_CLIMATE = 210
 #   npcs               98/body × cap (stated explicitly in the prompt, see _npc_count_constraint)
 #     name 5 chars ≈ 8 + gender ≈ 3 + age ≈ 3 + description ≤30 chars ≈ 45 + location_name ≈ 12
 #     + 5 fields of structure ≈ 25 → ~96, rounded to 98.
@@ -606,7 +607,8 @@ class ThemeAnalyzer:
         constraint_lines.append(
             f"- 钱与物价（economy）：写出这个世界的钱怎么叫、怎么计数，再列至多 {MAX_PRICES} 条参考物价，"
             "从日常小物到贵重之物都有一些，彼此价钱要相称。物价只是行情，不是哪一笔买卖的成交价；"
-            "人物各有多少钱不在这里定。"
+            "人物各有多少钱不在这里定。daily_cost 是一个寻常人一天吃住的花销，与物价相称；"
+            "每过一天，每个人物都要从自己钱袋里出这笔钱。"
         )
         # Criteria for the npcs tier. The count constraint is per call (stays in user); what this tier's
         # people look like is constant and goes in the system prefix. Mostly negative examples: positive

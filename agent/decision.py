@@ -44,6 +44,7 @@ from core.interfaces.action import (
 )
 from core.duration import describe_duration, describe_seconds
 from core.interfaces.llm import IndexedRef, LLMMessage, LLMRouter, LLMScene, extract_json_object, output_budget
+from core.interfaces.economy import Economy
 from core.interfaces.urgency import Urgency, parse_urgency
 from core.logging import get_logger
 from core.interfaces.perception import PerceivedIdentity, Situation, SpatialPerception, VisibleEntity
@@ -606,9 +607,11 @@ class DecisionEngine:
         *,
         seconds_per_step: int = 3600,
         world_start_second_of_day: int = 0,
+        economy: Economy = Economy(),
     ) -> None:
         self._llm_router = llm_router
         self._seconds_per_step = seconds_per_step
+        self._money_rule = _money_rule(economy)
         # Time of day at world start (injected by the world layer): "today/yesterday" in memory
         # prefixes counts midnights crossed, which a duration alone can't give.
         self._world_start_second_of_day = world_start_second_of_day
@@ -1155,7 +1158,7 @@ class DecisionEngine:
 - 如果要进行的行动涉及到人，行动一定要与【相关人物关系】中描述的关系符合常识，除非有特殊情况。
 - 不要脱离我此刻的需求与目标空转，也别被与我无关的事带跑。
 - 不要重复我刚刚做完的事，要往前推进。
-{CLOSED_WORLD_FACT_RULE_FIRST_PERSON}
+{self._money_rule}{CLOSED_WORLD_FACT_RULE_FIRST_PERSON}
 - 我不臆造我没感知到的人、事、动向。同时，注意区分已经发生，正在发生，将要发生的客观事实，不能混为一谈，比如“我要去超市”，“我正在去超市的路上”，“我已经到了超市”，这三个是不一样的客观事实。
 - 在行动前，需要先判断该事之前是不是做过，如果做过现在又重复做，需要先清楚为什么要重复做。宁可什么都不做也不要做一些无意义的重复的事情。
 - 行动前需要分析清楚此刻的自身处境，做出的行动选择需要符合常理，比如我正在被别人攻击，行动选择却是我现在要偷偷观察别人怎么打我，这是明显的不符合常理的。
@@ -1439,6 +1442,22 @@ def _own_item_ids(packet: PerceptionPacket) -> List[str]:
         e.entity_id for e in packet.spatial.visible_entities
         if e.holder_id and e.holder_id == packet.agent_id
     ]
+
+
+def _money_rule(economy: Economy) -> str:
+    """The decision's line on money: a world constant, so it sits in the system prefix. Empty in a
+    world without money."""
+    if not economy.has_money:
+        return ""
+    rule = "- 钱的来路：做营生、给人干活（WORK：卖货、行医、说书、帮工之类），外头的主顾会付钱。"
+    if economy.prices:
+        rule += f"行情：{economy.price_reference()}。"
+    if economy.charges_living:
+        rule += (
+            f"过日子也要花钱：一个寻常人一日吃住约{economy.amount_text(economy.daily_cost)}，"
+            "每过一天都从我钱袋里出；钱袋见底就要挨饿。"
+        )
+    return rule + "\n"
 
 
 def _format_candidate_line(index: int, candidate: ActionCandidate) -> str:

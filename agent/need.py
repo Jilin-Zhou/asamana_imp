@@ -311,6 +311,10 @@ _NEED_REST_BASELINE: float = 0.3
 _NEED_HOMEOSTASIS_RATE: float = 0.25
 _NEED_SUCCESS_RELIEF: float = 0.12
 _NEED_FAILURE_PRESSURE: float = 0.08
+# A day with none of its living paid. Enough to lift a rested physiological need past the
+# starvation line (engine.death_handler) for a while; homeostasis brings it back unless the
+# next day is short too.
+_NEED_SHORT_PRESSURE: float = 0.35
 
 
 # Maslow prepotency: additive scoring has no crisis priority, so collapse-level physiological activation
@@ -657,6 +661,17 @@ class NeedEngine:
             relaxed = intensity + _NEED_HOMEOSTASIS_RATE * (_NEED_REST_BASELINE - intensity)
             this_shock = shock if key == dominant_key else 0.0
             updated[key] = clamp(relaxed + this_shock, 0.05, 1.0)
+        return updated
+
+    def go_short(self, current: Dict[str, float], *, shortfall: float) -> Dict[str, float]:
+        """Need intensities after a day whose living was paid only in part — **pure**.
+        ``shortfall`` is the unpaid share, 0..1; it presses on the physiological need alone."""
+        key = NeedType.PHYSIOLOGICAL.value
+        updated = dict(current)
+        updated[key] = clamp(
+            current.get(key, _NEED_REST_BASELINE) + _NEED_SHORT_PRESSURE * clamp(shortfall, 0.0, 1.0),
+            0.05, 1.0,
+        )
         return updated
 
     async def evaluate_goal_progress(

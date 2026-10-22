@@ -2,7 +2,8 @@
 
 Money itself is a divisible thing in the world (``WorldEntityType.MONEY`` with a ``quantity``);
 this says how an amount reads in narrative text, and holds the price references every prompt that
-weighs a deal shares. Both are world constants, so they belong in a prompt's system part.
+weighs a deal shares, and what a day's living costs. All are world constants, so they belong in
+a prompt's system part.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ class Economy:
     currency: str = ""   # what the money is called: 银子 / 铜钱 / 现金
     unit: str = ""       # what it is counted in: 两 / 文 / 元
     prices: tuple[PriceReference, ...] = ()
+    # One ordinary person's food and lodging for a day; 0 = nobody pays to live.
+    daily_cost: int = 0
 
     @property
     def has_money(self) -> bool:
@@ -40,11 +43,21 @@ class Economy:
         """``一斗米约30文；一匹马约20两`` for a prompt; empty when there are none."""
         return "；".join(f"{p.item}约{p.price}{self.unit or self.currency}" for p in self.prices)
 
+    @property
+    def charges_living(self) -> bool:
+        return self.has_money and self.daily_cost > 0
+
+    def most_one_job_earns(self) -> int:
+        """The most a single piece of paid work brings in: the dearest thing on the price list,
+        or a few days' living when there is no list."""
+        return max([p.price for p in self.prices] or [self.daily_cost * 3])
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "currency": self.currency,
             "unit": self.unit,
             "prices": [{"item": p.item, "price": p.price} for p in self.prices],
+            "daily_cost": self.daily_cost,
         }
 
     @classmethod
@@ -64,8 +77,13 @@ class Economy:
                 continue
             if item and price > 0:
                 prices.append(PriceReference(item, price))
+        try:
+            daily_cost = max(0, int(payload.get("daily_cost") or 0))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            daily_cost = 0
         return cls(
             currency=str(payload.get("currency") or "").strip(),
             unit=str(payload.get("unit") or "").strip(),
             prices=tuple(prices[:MAX_PRICES]),
+            daily_cost=daily_cost,
         )

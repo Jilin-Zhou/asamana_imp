@@ -11,6 +11,7 @@ from core.interfaces.action import (
 )
 from core.interfaces.check import CheckTier
 from core.interfaces.directory import WorldDirectory
+from core.interfaces.economy import Economy
 from core.interfaces.llm import (
     IndexedRef, LLMMessage, LLMRouter, LLMScene, coerce_bool, extract_json, output_budget,
 )
@@ -76,6 +77,7 @@ class _WorkVerdict:
     product_desc: str = ""
     product_content: str = ""
     product_carried: bool = True
+    earned: int = 0
 
 
 class WorkExecutor(ActionExecutor):
@@ -86,6 +88,11 @@ class WorkExecutor(ActionExecutor):
     person. The account must rest on what the actor perceives (things at hand, who's present, his
     ``expected_outcome``): from persona alone it is always "nothing came of it" and the goal is
     retried forever.
+
+    In a world with money, work done as a trade (selling, treating, telling stories, hired
+    labour) is paid by customers outside the simulation: the same account names the sum, which
+    enters the world. Capped by ``Economy.most_one_job_earns``: one runaway number would sit in a
+    purse for the rest of the story.
     """
 
     def __init__(
@@ -95,11 +102,26 @@ class WorkExecutor(ActionExecutor):
         *,
         check_assessor: CheckAssessor,
         seconds_per_step: int = 3600,
+        economy: Economy | None = None,
     ) -> None:
         self._llm = llm_router
         self._directory = directory
         self._checks = check_assessor
         self._seconds_per_step = seconds_per_step
+        self._economy = economy if economy is not None else Economy()
+        # World constants, so they sit in the system prefix; a world without money asks nothing.
+        self._earned_rule = (
+            f"""- earned:这段工夫若是做营生、给人干活(卖货、行医、说书、帮工之类),从外头的主顾那里实际
+  收到的钱数,按{self._economy.unit or self._economy.currency}计的整数;要和这一回的结果、花掉的时间相称,
+  参照行情:{self._economy.price_reference() or "无"}。挣到了钱,fact 里写明挣了多少。
+  不是营生、或分文未得,填 0;东西做出来还没卖掉的,也是 0。
+"""
+            if self._economy.has_money else ""
+        )
+        self._earned_field = (
+            f'"earned": 整数（按{self._economy.unit or self._economy.currency}计；没挣到填 0）, '
+            if self._economy.has_money else ""
+        )
 
     def _outcome(self, agent_id: str, purpose: str, location: str, *, succeeded: bool) -> str:
         """Fallback 3p outcome when the judge gives none. Never quotes ``purpose``: it's a
@@ -290,6 +312,7 @@ class WorkExecutor(ActionExecutor):
             entity_spawns=spawns,
             entity_state_changes=changes,
             check=check.record,
+            earned=gen_result.earned,
         )]
 
     async def interrupt(
@@ -421,6 +444,15 @@ class WorkExecutor(ActionExecutor):
             adjudication_failed=True,
         )
 
+    def _earned(self, raw: object) -> int:
+        if not self._economy.has_money:
+            return 0
+        try:
+            amount = int(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(amount, self._economy.most_one_job_earns()))
+
     async def _generate_outcome(
         self,
         *,
@@ -476,7 +508,7 @@ class WorkExecutor(ActionExecutor):
 【我要写的】
 - fact:第一人称,我自己记下的这一场——做出了什么、成果是什么，如果有新东西产生也需要在这里点明;若有没了结的部分或压根没做成的,
   一并说清缘由。【这一回的结果】要我写清的瑕疵、代价或好处,具体写在这里。
-- updated_index / updated_name / updated_state / updated_desc / updated_content:这一场我
+""" + self._earned_rule + """- updated_index / updated_name / updated_state / updated_desc / updated_content:这一场我
   **动到了手上哪一件东西**,它又变成了什么样。先在所给现场「我手上的东西」那一行里指出是哪一件
   (填它的序号),再写它经这一场之后的名字、所属状态、现在的样子
   与现在的内容（如果有）;哪一样没变就留空哪一栏。
@@ -517,7 +549,7 @@ class WorkExecutor(ActionExecutor):
 严格输出以下 JSON,不要任何多余内容。**先写 fact**——留下的东西要从我实际做出来的里头读,
 不是先拍板再补一句话去圆;后面三句叙述又要把那件东西说进去。
 **product_carried 写裸布尔 true / false,updated_index 写裸整数,都不要加引号。**
-{"fact": "第一人称、≤68字", "updated_index": 整数（0=手上的东西一件也没动到）, "updated_name": "≤14字；不改名则空字符串", "updated_state": "≤12字；没变则空字符串", "updated_desc": "≤24字；没变则空字符串", "updated_content": "≤80字；没变或没有内容则空字符串", "product_name": "≤14字；没有则空字符串", "product_desc": "≤24字；没有则空字符串", "product_content": "≤80字；没有内容则空字符串", "product_carried": true或false, "outcome": "第三人称、点名我的名字、≤40字、**单行不换行**", "observation": "第三人称、点名我的名字、≤30字、**单行不换行**", "why": "第三人称、≤20字；做成了给空字符串"}
+{"fact": "第一人称、≤68字", """ + self._earned_field + """"updated_index": 整数（0=手上的东西一件也没动到）, "updated_name": "≤14字；不改名则空字符串", "updated_state": "≤12字；没变则空字符串", "updated_desc": "≤24字；没变则空字符串", "updated_content": "≤80字；没变或没有内容则空字符串", "product_name": "≤14字；没有则空字符串", "product_desc": "≤24字；没有则空字符串", "product_content": "≤80字；没有内容则空字符串", "product_carried": true或false, "outcome": "第三人称、点名我的名字、≤40字、**单行不换行**", "observation": "第三人称、点名我的名字、≤30字、**单行不换行**", "why": "第三人称、≤20字；做成了给空字符串"}
 """
         # §3: the thing to judge and the yardstick go last, right before the output instructions.
         scene_part = f"\n【我此刻所处的现场】\n{scene}\n" if scene else ""
@@ -576,8 +608,9 @@ class WorkExecutor(ActionExecutor):
                     # + updated_content (≤80 ≈ 120) + product_name (≤14 ≈ 21)
                     # + product_desc (≤24 ≈ 36) + product_content (≤80 ≈ 120)
                     # + product_carried (~3) + outcome (≤40 ≈ 60) + observation (≤30 ≈ 45)
-                    # + why (≤20 ≈ 30) + structure for 13 fields (~65); est. ~680 tok.
-                    max_tokens=output_budget(680),
+                    # + why (≤20 ≈ 30) + structure for 13 fields (~65) ≈ 680, plus earned (~3 + ~5
+                    # structure) in a world with money.
+                    max_tokens=output_budget(688 if self._economy.has_money else 680),
                 json_mode=True,
                 )
             data = extract_json(response.content)
@@ -611,6 +644,7 @@ class WorkExecutor(ActionExecutor):
                 updated_state=str(data.get("updated_state", "")).strip(),
                 updated_desc=str(data.get("updated_desc", "")).strip(),
                 updated_content=str(data.get("updated_content", "")).strip(),
+                earned=self._earned(data.get("earned")),
             )
         except Exception as exc:
             logger.warning("work_outcome_failed", extra={"agent_id": agent.agent_id, "error": str(exc)})

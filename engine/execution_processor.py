@@ -282,6 +282,8 @@ class ExecutionProcessor:
         ``entity_spawns`` yields no key: no other result can refer to a new thing, and
         ``spawn_entity`` has no await, so concurrent groups can't interleave inside it."""
         keys: set[str] = {result.action.agent_id}
+        if result.earned:
+            keys.add("purse:" + result.action.agent_id)
         for effect in result.target_effects:
             keys.add(effect.agent_id)
         for change in result.entity_state_changes:
@@ -432,6 +434,8 @@ class ExecutionProcessor:
                 "trade_transfer_void",
                 extra={"agent_id": result.action.agent_id, "step": step},
             )
+        if result.earned > 0:
+            self._environment.add_money(result.earned, holder_id=result.action.agent_id)
         for spawn in result.entity_spawns:
             try:
                 # A refusal is legitimate, but memory already says "I made it", so log at error
@@ -634,6 +638,8 @@ class ExecutionProcessor:
             "adjudication_failed": result.adjudication_failed,  # null steps aren't carried
             "not_executed": result.not_executed,  # unmet-precondition non-event (muted when rendered)
             "dialogue": list(result.dialogue),
+            # Money this act brought into the world (paid work); 0 for nearly every act.
+            "earned": result.earned,
             # The roll behind ``succeeded``; code layer, for the observer only.
             "check": result.check.to_dict() if result.check is not None else None,
             # From landed effects (what happened), not exec_state's list (intent). Kept apart

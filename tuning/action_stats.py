@@ -3,7 +3,8 @@ the dice fell, and how much changed hands. Counted from snapshots, no LLM.
 
 One act counts once: a joint act writes one record per participant and a multi-step act one per
 beat, so only terminal beats count, folded by execution and read from the initiator's record.
-What changed hands is read off the world's own state between snapshots, whichever act moved it.
+What changed hands is read off the world's own state between snapshots, whichever act moved it;
+money that entered the world (paid work) is counted apart.
 """
 
 from __future__ import annotations
@@ -53,20 +54,33 @@ def _holdings(snapshot: WorldSnapshot) -> "tuple[Counter[str], dict[str, tuple[s
 
 def holdings_moved(snapshots: Iterable[WorldSnapshot]) -> dict[str, int]:
     """Money that reached new hands (or the ground) and things that changed place or holder,
-    between consecutive snapshots that saved world state. Money only splits and merges, so the
-    sum of what each holder gained is what moved."""
-    money_moved = things_moved = 0
+    between consecutive snapshots that saved world state, plus money earned from outside.
+
+    Between holders money only splits and merges, so what each holder gained, less what he earned
+    on those steps, is what moved. Living costs only take money out of the world. Approximate
+    only when one holder earns, is paid and pays his living on the same step: the earnings then
+    hide what he was paid."""
+    money_moved = things_moved = money_earned = 0
     previous = None
+    earned: Counter[str] = Counter()
     for snapshot in sorted(snapshots, key=lambda s: s.step):
+        for record in snapshot.actions_this_step:
+            amount = int(record.get("earned") or 0)
+            if amount > 0:
+                earned[str(record.get("agent_id") or "")] += amount
+                money_earned += amount
         current = _holdings(snapshot)
         if current is None:
             continue
         if previous is not None:
             money, things = current
-            money_moved += sum(max(0, amount - previous[0].get(holder, 0)) for holder, amount in money.items())
+            money_moved += sum(
+                max(0, amount - previous[0].get(holder, 0) - earned[holder]) for holder, amount in money.items()
+            )
             things_moved += sum(1 for eid, where in things.items() if eid in previous[1] and previous[1][eid] != where)
+        earned.clear()
         previous = current
-    return {"money_moved": money_moved, "things_moved": things_moved}
+    return {"money_moved": money_moved, "things_moved": things_moved, "money_earned": money_earned}
 
 
 def action_stats(snapshots: Iterable[WorldSnapshot]) -> dict[str, Any]:

@@ -175,6 +175,7 @@ class AbilityDesigner:
         money = (
             f"{economy.currency}，按{economy.unit or economy.currency}计"
             + (f"；参考物价：{economy.price_reference()}" if economy.prices else "")
+            + (f"；一个寻常人一日吃住约{economy.amount_text(economy.daily_cost)}" if economy.charges_living else "")
             if economy.has_money else "这个世界没有钱"
         )
         things = "\n".join(

@@ -592,6 +592,9 @@ class ActionResult:
     # An exchange that lands whole or not at all (TRADE); see Transfer. On one participant's
     # result only, or it would land twice.
     transfers: list[Transfer] = field(default_factory=list)
+    # Money paid into the actor's purse from outside the simulation: customers, patients, an
+    # audience nobody models (WORK done as a trade). Lands with the result's other world changes.
+    earned: int = 0
     # A receipt, not a command: ``ErrandExecutor.start`` already landed the errand. Don't land it
     # again: checking the body is free and occupying it must be one operation. Empty never means
     # the Npc refused (it has no will); only rules reject an errand.

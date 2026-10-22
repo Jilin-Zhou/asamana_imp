@@ -688,6 +688,16 @@ class EnvironmentSystem:
         self.register_entity(pile)
         self._set_quantity(pile, quantity)
 
+    def take_money(self, holder_id: str, quantity: int) -> int:
+        """Take up to ``quantity`` out of this holder's purse and out of the world (living costs
+        paid to people nobody models); returns how much there was to take."""
+        pile = self._money_pile(holder_id=holder_id)
+        if pile is None or quantity <= 0:
+            return 0
+        taken = min(quantity, pile.quantity)
+        self._set_quantity(pile, pile.quantity - taken)
+        return taken
+
     def _move_money(self, pile: WorldEntity, change: EntityStateChange) -> None:
         """Move all or part of a pile; it merges into whatever pile is already at the other end."""
         amount = pile.quantity if change.quantity is None else max(0, min(change.quantity, pile.quantity))

@@ -31,6 +31,7 @@ from engine.event import EventSettings, EventSystem
 from engine.event_seq import EventSequencer
 from engine.arbiter import ArbitratedAction, ExecutionArbiter
 from engine.death_handler import DeathHandler
+from engine.living_costs import LivingCosts
 from engine.director import DirectorChannel
 from engine.injection import Author, InjectionDispatcher, serialize_world_event
 from engine.intervention_receipt import build_receipt
@@ -162,6 +163,7 @@ class NarrativeRuntime:
             processor=self._processor,
             broadcast_channel=self._broadcast_channel,
         )
+        self._living = LivingCosts(self._environment, self._clock.config)
         # The tier without cognition, advanced one hop per step. Built here, not in the
         # container: all its dependencies are already runtime-owned.
         self._npc_runner = NpcRunner(
@@ -476,6 +478,8 @@ class NarrativeRuntime:
         # Apply passive vitality decay before scheduling so dead agents are excluded this step.
         await self._deaths.apply_vitality_decay(agents, step)
         self._sync_dead_ids(agents_dict)
+        # A day's living is paid before planning, so going short already weighs on this step.
+        await self._living.settle(agents, step)
 
         # Scheduler excludes the step-start IN_PROGRESS set, then admits only the idle bodies
         # its cadence gate judges worth a decision. The gate reads pending_external_goals, so

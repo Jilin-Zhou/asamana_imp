@@ -29,6 +29,7 @@ from engine.clock import (
     resolve_step_seconds,
 )
 from core.interfaces.directory import WorldDirectory
+from core.interfaces.economy import Economy
 from engine.directory import LiveWorldDirectory
 from engine.environment import DEFAULT_MAX_NPCS, IN_TRANSIT, EnvironmentSystem
 from engine.weather import WeatherSystem
@@ -90,6 +91,7 @@ class WorldInitializer:
                 world_id=world_id,
                 definition=definition,
                 clock_config=clock_config,
+                economy=analysis.economy,
             )
             agents[agent.agent_id] = agent
             # Vector collections are created per agent → run concurrently after the loop.
@@ -182,7 +184,8 @@ class WorldInitializer:
         )
 
     def _instantiate_agent(
-        self, *, world_id: str, definition: AgentDefinition, clock_config: WorldTimeConfig = WorldTimeConfig()
+        self, *, world_id: str, definition: AgentDefinition, clock_config: WorldTimeConfig = WorldTimeConfig(),
+        economy: Economy = Economy(),
     ) -> Agent:
         seconds_per_step = clock_config.seconds_per_step
         # Closure from step → the world calendar's time label, injected into MemorySystem to render time
@@ -271,6 +274,7 @@ class WorldInitializer:
                 self._container.llm_router,
                 seconds_per_step=seconds_per_step,
                 world_start_second_of_day=world_start_second_of_day,
+                economy=economy,
             ),
             memory_system=memory_system,
             need_engine=NeedEngine(llm_router=self._container.llm_router, seconds_per_step=seconds_per_step,
@@ -511,6 +515,7 @@ class WorldInitializer:
                 world_id=world_id,
                 definition=definition,
                 clock_config=clock_config,
+                economy=analysis.economy,
             )
             agents[agent.agent_id] = agent
             await agent.memory_system.ensure_collections()

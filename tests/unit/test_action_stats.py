@@ -79,8 +79,20 @@ def test_what_changed_hands_is_read_off_the_world_between_snapshots() -> None:
         _world(0, {"a": 30}, ring_with="b"),
         _snap(1),  # saved no world state: skipped, not read as everything vanishing
     ])
-    assert stats["holdings"] == {"money_moved": 20, "things_moved": 1}
+    assert stats["holdings"] == {"money_moved": 20, "things_moved": 1, "money_earned": 0}
 
 
 def test_a_run_without_world_state_moved_nothing() -> None:
-    assert action_stats([_snap(1), _snap(2)])["holdings"] == {"money_moved": 0, "things_moved": 0}
+    assert action_stats([_snap(1), _snap(2)])["holdings"] == {
+        "money_moved": 0, "things_moved": 0, "money_earned": 0,
+    }
+
+
+def test_money_earned_from_outside_is_counted_apart_from_money_changing_hands() -> None:
+    before = _world(1, {"a": 10, "b": 20}, ring_with="a")
+    after = _world(2, {"a": 90, "b": 15, "c": 5}, ring_with="a")
+    after.actions_this_step = [_rec("w1", "a", "settled", type="work", earned=80)]
+    # a earned 80; b handed c 5. Nobody handed a anything.
+    assert action_stats([before, after])["holdings"] == {
+        "money_moved": 5, "things_moved": 0, "money_earned": 80,
+    }

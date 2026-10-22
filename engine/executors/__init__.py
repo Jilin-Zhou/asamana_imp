@@ -32,7 +32,7 @@ def build_default_registry(
 
     ``check_seed`` seeds every check's dice (``engine.check``); pass the world id, so a world's
     rolls are reproducible and no two worlds share them. ``economy`` is how amounts of money
-    read in a trade's narration.
+    read in a trade's narration, and what paid work can bring in.
     """
     registry = ActionExecutorRegistry()
     checks = CheckAssessor(llm_router, seconds_per_step=seconds_per_step, seed=check_seed)
@@ -40,7 +40,8 @@ def build_default_registry(
     social = SocialExecutor(
         llm_router, directory, seconds_per_step=seconds_per_step, world_start_second_of_day=world_start_second_of_day)
     movement = MovementExecutor(directory, seconds_per_step=seconds_per_step)
-    work = WorkExecutor(llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
+    work = WorkExecutor(
+        llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step, economy=economy)
     physical = PhysicalExecutor(
         llm_router, directory, check_assessor=checks, seconds_per_step=seconds_per_step)
     covert = CovertExecutor(
