@@ -22,6 +22,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- A character who agreed on a time sat it out whenever nothing else stirred him that step: the scheduler skipped him and a long action ran straight through it. The agreed time now admits him to decide once when it arrives (or as soon as he is free after), and a busy character weighs breaking off for it.
 - The tuning action harness read a field `ActionResult` doesn't have when reporting observations.
 - Handing something over was rejected when the decision also named the recipient as the person acted on; it now hands the thing over.
 - Map selection put pre-modern themes on the modern city map when its streets fit better; a theme's era now outranks the map's layout, since the map also sets the buildings and everyone's dress.
