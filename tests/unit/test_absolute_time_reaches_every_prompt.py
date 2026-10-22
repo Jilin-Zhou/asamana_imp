@@ -27,6 +27,9 @@ from core.prompts import (
     ABSOLUTE_TIME_RULE_FIRST_PERSON,
     KEEP_ABSOLUTE_TIME_RULE,
 )
+from tests.unit.check_fixtures import fixed_check
+from core.interfaces.check import CheckTier
+from engine.check import CheckVerdict
 
 #: The phrase both person variants share; detects the rule regardless of variant.
 MARK = "具体时间点"
@@ -325,16 +328,17 @@ def test_goal_progress_residue_prompt_carries_the_rule() -> None:
 async def test_dialogue_prompt_carries_the_rule_and_the_clock() -> None:
     """A "明晨" agreed in dialogue goes into both parties' memories, and from then on their
     readings of the same appointment diverge."""
-    from engine.executors.social import SocialExecutor
+    from engine.executors.social import SocialExecutor, _Party
 
     llm = _Capture('{"dialogue":[{"speaker":1,"line":"好"}],"observation":"o"}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     env = _environment_at(agent_ids=("a2", "a3"))
     await ex._llm_full_dialogue(  # noqa: SLF001
-        initiator=_agent("a2", "长孙无忌"), target=_agent("a3", "李世民"),
-        initiator_name="长孙无忌", target_name="李世民",
-        initiator_ctx={}, target_ctx={}, purpose="储位之事",
-        turns=2, now_step=0, expected_outcome="",
+        speakers=[
+            (_agent("a2", "长孙无忌"), _Party("a2", "长孙无忌", "initiator", "a3", "储位之事", ""), {}),
+            (_agent("a3", "李世民"), _Party("a3", "李世民", "addressee", "a2", "", ""), {}),
+        ],
+        purpose="储位之事", turns=2, now_step=0, expected_outcome="",
         scene=_scene_module().assemble_scene_context(
             "a2", environment=env, directory=_directory(),
             visibility=_scene_module().SceneVisibility.GOD,
@@ -360,13 +364,13 @@ async def test_work_self_appraisal_carries_the_rule_and_the_clock() -> None:
     from core.interfaces.perception import LocationView
 
     llm = _Capture('{"fact":"f","success":true,"outcome":"o","observation":"ob","why":""}')
-    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = WorkExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     header = render_situation_header(
         Situation(location_view=LocationView(name="皇城", description=""), time_label=WORLD_NOW),
         voice=SituationVoice.FIRST,
     )
     await ex._generate_outcome(  # noqa: SLF001
-        agent=_agent(), purpose="推演明日面谈的论据", duration_label="约8小时",
+        agent=_agent(), tier=CheckTier.SUCCESS, purpose="推演明日面谈的论据", duration_label="约8小时",
         now_step=0, situation_header=header,
     )
     text = llm.text()
@@ -378,11 +382,11 @@ async def test_work_self_appraisal_carries_the_rule_and_the_clock() -> None:
 async def test_social_memory_summary_carries_the_rule_and_the_clock() -> None:
     from engine.executors.social import SocialExecutor
 
-    llm = _Capture('{"fact":"f","success":true,"relation":"neutral","why":""}')
+    llm = _Capture('{"fact":"f","success":true,"relations":[{"index":1,"relation":"neutral"}],"why":""}')
     ex = SocialExecutor(llm, _directory(), seconds_per_step=3600)
     await ex._memory_summary(  # noqa: SLF001
-        agent=_agent(), other_id="a3", other_name="李世民", transcript="……",
-        purpose="约定面谈", fallback_fact="谈了一场。", is_initiator=True, now_step=0,
+        agent=_agent(), others=[("a3", "李世民")], transcript="……", role_line="是我主动找李世民谈的",
+        purpose="约定面谈", fallback_fact="谈了一场。", talk_role="initiator", now_step=0,
         environment=_environment_at(agent_ids=("a2", "a3")),
     )
     text = llm.text()
@@ -490,9 +494,9 @@ async def test_covert_judge_stays_out_of_scope() -> None:
     from engine.executors.covert import CovertExecutor
 
     llm = _Capture('{"reason":"x","achieved":false,"detected":true,"outcome":"o","fact":"f"}')
-    ex = CovertExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = CovertExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     await ex._judge(  # noqa: SLF001
-        _agent(), purpose="潜到廊下偷听", duration_label="约1小时",
+        _agent(), check=CheckVerdict(tier=CheckTier.SUCCESS), watched=False, purpose="潜到廊下偷听", duration_label="约1小时",
         expected_outcome="", scene="", now_step=0,
     )
     assert MARK not in llm.text()
@@ -508,7 +512,7 @@ async def test_physical_target_reaction_stays_out_of_scope() -> None:
         '{"fact":"f","emotion_type":"anger","emotion_intensity":0.8,'
         '"emotion_valence":-0.7,"relation":"negative"}'
     )
-    ex = PhysicalExecutor(llm, _directory(), seconds_per_step=3600)
+    ex = PhysicalExecutor(llm, _directory(), seconds_per_step=3600, check_assessor=fixed_check())
     await ex._llm_target_reaction(  # noqa: SLF001
         target_agent=_agent(), actor_id="a3", actor_name="李世民",
         event_line="李世民揪住尉迟恭的衣领，将他按在墙上", succeeded=True, target_damage=0.0, target_relief=0.0, step=0,

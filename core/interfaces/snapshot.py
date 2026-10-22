@@ -86,7 +86,8 @@ class SnapshotProvider(ABC):
 
     @abstractmethod
     async def delete_steps_after(self, world_id: str, step: int) -> None:
-        """Delete all snapshots with step number greater than *step*."""
+        """Delete all snapshots, and the narrations of those steps, with step number greater
+        than *step*."""
 
     @abstractmethod
     async def delete_world(self, world_id: str) -> None:
@@ -125,6 +126,18 @@ class SnapshotProvider(ABC):
         keep being edited, and a moved tile would render garbage in an old world.
         `rel_path` is the path exactly as written in the .tmj.
         """
+
+    @abstractmethod
+    async def save_narration(self, world_id: str, step: int, data: dict[str, Any]) -> None:
+        """Persist one step's stage narration (``engine.stage_narrator``).
+
+        Kept beside the snapshot, not inside it: it is written after the step, off the step
+        loop, and no simulation state is ever restored from it.
+        """
+
+    @abstractmethod
+    async def load_narration(self, world_id: str, step: int) -> dict[str, Any] | None:
+        """Read one step's stage narration, or None if that step has none."""
 
     @abstractmethod
     async def load_world_asset(self, world_id: str, rel_path: str) -> bytes | None:

@@ -1,7 +1,7 @@
 """The frontend's copy of the contract must match the closed sets in ``core.interfaces.action``
 value for value.
 
-``ActionType`` / ``Deed`` / ``RefKind`` are closed sets, and the frontend keeps a hand-copied
+``ActionType`` / ``Deed`` / ``RefKind``, a check's three enums and ``Attribute`` are closed sets, and the frontend keeps a hand-copied
 duplicate (the renderer doesn't import Python). A value missing from the copy raises nothing:
 TypeScript checks exhaustiveness against the copy, so a "full table" missing a member is still
 complete as far as types go, and at runtime the lookup misses and silently draws nothing — e.g. an
@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 from core.interfaces import action as A
+from core.interfaces.ability import Attribute
 from core.interfaces.action import ActionType, Deed
+from core.interfaces.check import CheckTier, Difficulty, Edge
 
 _CONTRACT = Path("frontend/src/lib/contract.ts")
 
@@ -38,6 +40,10 @@ def _ts_members(name: str) -> set[str]:
         ("RefKind", {
             v for k, v in vars(A).items() if k.startswith("KIND_") and isinstance(v, str)
         }),
+        ("Difficulty", {d.value for d in Difficulty}),
+        ("Edge", {e.value for e in Edge}),
+        ("CheckTier", {t.value for t in CheckTier}),
+        ("Attribute", {a.value for a in Attribute}),
     ],
 )
 def test_the_frontend_copy_of_a_closed_set_has_every_value(name: str, values: set[str]) -> None:

@@ -191,6 +191,17 @@ def test_cast_roles_reach_review_under_the_figure_their_number_names(tmp_path: P
     assert [(r["name"], r["narrative_role"]) for r in view.init["cast_roles"]] == [("乙", "次子")]
 
 
+def test_ability_ratings_reach_review_under_the_figure_their_number_names(tmp_path: Path) -> None:
+    roster = {"key_figures": [{"name": "甲"}, {"name": "乙"}]}
+    rated = {"cast": [{"index": 1, "basis": "力大", "attributes": {"体魄": 5}, "skills": []}]}
+    _write(tmp_path, "build.jsonl", [
+        _rec(scene="world_building", response_content=json.dumps(roster, ensure_ascii=False)),
+        _rec(scene="ability_design", response_content=json.dumps(rated, ensure_ascii=False)),
+    ])
+    view = reconstruct_world(WORLD, trace_dir=str(tmp_path))
+    assert [(r["name"], r["basis"]) for r in view.init["abilities"]] == [("甲", "力大")]
+
+
 def test_init_shows_the_world_s_things_and_errand_hands(trace_dir: str) -> None:
     """Items and errand-runners are part of the opening, fixed at build time and unchangeable.
     Without them the judge sees only half the world and can't judge what the opening allows beyond

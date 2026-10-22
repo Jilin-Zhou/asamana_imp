@@ -646,6 +646,22 @@ class Agent:
         if not self.personality.is_alive:
             self._trigger_death(step, cause=death_cause)
 
+    async def go_short(self, *, shortfall: float, fact: str, step: int) -> None:
+        """He couldn't pay all of his living: the unpaid share (0..1) presses on his physiological
+        need, and he remembers it in ``fact``, first person. Paying in full is routine and calls
+        nothing."""
+        self.personality.update_need_intensities(
+            self.need_engine.go_short(self.personality.state.need_intensities, shortfall=shortfall)
+        )
+        await self.memory_system.record_event(
+            current_step=step,
+            raw_content=fact,
+            experiential_content=fact,
+            personality=self.personality,
+            triggered_by="living_costs",
+            situation=self._situation,
+        )
+
     def _trigger_death(self, step: int, cause: str | None = None) -> None:
         """Agent-internal death: only flip the active flag and record the cause phrase.
 

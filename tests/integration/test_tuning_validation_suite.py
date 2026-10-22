@@ -9,6 +9,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 from tuning.validation_suite import STEP_LEAK, aggregate, summary_md, text_leak
@@ -94,6 +95,8 @@ async def test_every_suite_turns_a_crashed_scenario_into_a_failed_row(
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     container.llm_router = LLMRouter(providers)
     world_id, _ = await run_build(
         container, test_config, "suite-theme", template="changan_iso", sink=InMemoryTraceSink()

@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from agent.goals import agreed_times_reached
 from agent.motivation import ExternalDriveType
 from agent.personality import ActionStatus
 from core.context import annotate_call, observe_stage
@@ -83,7 +84,8 @@ class InterruptCoordinator:
         agents: "Dict[str, Agent]",
         step: int,
     ) -> List[Dict[str, Any]]:
-        """Evaluate interrupt triggers from messages, broadcasts, and external goals.
+        """Evaluate interrupt triggers from messages, broadcasts, external goals, and the agreed
+        time of one's own goals arriving.
 
         Collect merges each agent's signals; Decide runs per-agent decisions concurrently; Apply
         runs serially, so a shared multi-participant action is torn down only once.
@@ -147,6 +149,14 @@ class InterruptCoordinator:
                         threat_reason = f"我感受到的外部压力：{goal.text}"
                     _register(agent_id, threat_reason)
             self._interrupt_seen_goals[agent_id] = qualifying
+
+        # Path 4: the agreed time of one of his own goals arrives this step. Edge-triggered by
+        # the deadline itself; he decides whether to break off for it.
+        for agent_id, agent in agents.items():
+            for goal in agreed_times_reached(
+                agent.personality.state.short_term_goal_entities, step, since=step - 1,
+            ):
+                _register(agent_id, f"我约定的时刻到了：{goal.text}")
 
         if not candidates:
             return []

@@ -11,6 +11,7 @@ from core.container import Container
 from core.context import clear_log_context
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 
 # Shared mock world-building contract for tests that need a fully built world.
 # Single source of truth: schema changes to WorldBuilder/CastDesigner update here.
@@ -21,6 +22,8 @@ MOCK_WORLD_BUILDING_RESPONSE = json.dumps({
     "narrative_theme": "权力的代价",
     "narrative_pitch": "继承之争已被双方默认逼到临界，谁先开口或动手尚未决定。",
     "world_time_config": {"era_name": "武德", "start_year": 9},
+    "climate": "temperate_monsoon",
+    "economy": {"currency": "铜钱", "unit": "文", "prices": [{"item": "一斗米", "price": 30}]},
     "key_figures": [
         {"name": "Li Shimin", "role": "Prince of Qin", "importance": "main", "brief": "Battle-tested prince under threat."},
         {"name": "Li Jiancheng", "role": "Crown Prince", "importance": "main", "brief": "Heir defending his position."},
@@ -91,8 +94,9 @@ def test_config() -> object:
 #             (achieved = what the attempt uncovered, not whether it finished. The `fact` below
 #             reveals nothing: don't use it as an intel sample; intel tests supply their own.)
 #   work:     success / fact / outcome (3p) / why
-#   social:   dialogue[{speaker:1|2, line}] + observation (onlooker view of the whole scene)
-#             + fact / success / relation / why (per-participant self-assessment)
+#   social:   dialogue[{speaker:N, line}] + observation (onlooker view of the whole scene)
+#             + fact / success / relations[{index, relation}] / why (per-participant
+#             self-assessment)
 #
 # The default verdict is the most conservative: success, no damage, neutral relation,
 # undetected. Cases needing another verdict (failure / detected / SEIZE …) override `fixed_response`.
@@ -107,6 +111,7 @@ MOCK_ADJUDICATION_RESPONSE = json.dumps({
     "why": "",
     "observation": "两人说了几句便各自散了。",
     "relation": "neutral",
+    "relations": [{"index": 1, "relation": "neutral"}],
     "actor_damage": 0.0,
     "target_damage": 0.0,
     "new_entity_state": "被动过",
@@ -142,6 +147,8 @@ def mock_build_container(test_config: object) -> Container:
     providers = {scene: c.llm_router.get(scene) for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=MOCK_WORLD_BUILDING_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=MOCK_CAST_DESIGN_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     providers[LLMScene.PERSONA_GENERATION] = MockLLMProvider(fixed_response="{}")
     providers[LLMScene.AGENT_ACTION_NARRATION] = MockLLMProvider(
         fixed_response=MOCK_ADJUDICATION_RESPONSE

@@ -8,6 +8,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.fixtures import load_fixture
 from tuning.phase_harness.plan_step import run_plan_step
@@ -44,6 +45,8 @@ async def test_run_plan_step_restores_and_captures_plans(container, test_config)
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     # A parseable decision (selected_index=3 → WORK) so plan_step yields a real
     # decision; "{}" would parse to no selection → action=None (agent skipped).
     providers[LLMScene.AGENT_DECISION_MAIN] = MockLLMProvider(
@@ -74,6 +77,8 @@ async def test_run_world_pressure_records_per_agent_and_writes_fixture(
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     container.llm_router = LLMRouter(providers)
 
     world_id, _ = await run_build(container, test_config, "pressure-theme", template="changan_iso", sink=InMemoryTraceSink())
@@ -107,6 +112,8 @@ async def test_world_pressure_scenario_injects_messages_and_ambient(
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     container.llm_router = LLMRouter(providers)
     world_id, _ = await run_build(container, test_config, "sig-theme", template="changan_iso", sink=InMemoryTraceSink())
 

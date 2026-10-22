@@ -111,7 +111,9 @@ async def run_interrupt(
 
     # Real runtime: _decide_interrupt computes progress_hint internally and calls evaluate_interrupt.
     registry = build_default_registry(
-        traced_container.llm_router, world.directory, seconds_per_step=world.clock_config.seconds_per_step)
+        traced_container.llm_router, world.directory,
+        seconds_per_step=world.clock_config.seconds_per_step, check_seed=world_id,
+        economy=world.environment.economy)
     message_system = MessageSystem(traced_container.message_provider, world_id=world_id)
     runtime = make_action_runtime(traced_container, config, world_id, world, registry, message_system)
     progress_hint = runtime._interrupts._render_progress_hint(exec_state)  # noqa: SLF001 — reuse the real translation, capture it for display

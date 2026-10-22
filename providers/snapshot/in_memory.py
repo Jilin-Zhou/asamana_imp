@@ -17,6 +17,7 @@ class InMemorySnapshotProvider(SnapshotProvider):
         self._world_configs: Dict[str, dict[str, Any]] = {}
         self._world_maps: Dict[str, dict[str, Any]] = {}
         self._world_assets: Dict[Tuple[str, str], bytes] = {}
+        self._narrations: Dict[Tuple[str, int], dict[str, Any]] = {}
 
     async def save(self, world_id: str, step: int, snapshot: WorldSnapshot) -> None:
         self._snapshots[(world_id, step)] = snapshot
@@ -41,6 +42,8 @@ class InMemorySnapshotProvider(SnapshotProvider):
         keys = [k for k in self._snapshots if k[0] == world_id and k[1] > step]
         for k in keys:
             del self._snapshots[k]
+        for k in [k for k in self._narrations if k[0] == world_id and k[1] > step]:
+            del self._narrations[k]
 
     async def delete_world(self, world_id: str) -> None:
         keys = [k for k in self._snapshots if k[0] == world_id]
@@ -50,6 +53,8 @@ class InMemorySnapshotProvider(SnapshotProvider):
         self._world_maps.pop(world_id, None)
         for key in [k for k in self._world_assets if k[0] == world_id]:
             del self._world_assets[key]
+        for key in [k for k in self._narrations if k[0] == world_id]:
+            del self._narrations[key]
 
     async def save_world_config(self, world_id: str, data: dict[str, Any]) -> None:
         self._world_configs[world_id] = data
@@ -68,3 +73,9 @@ class InMemorySnapshotProvider(SnapshotProvider):
 
     async def load_world_asset(self, world_id: str, rel_path: str) -> Optional[bytes]:
         return self._world_assets.get((world_id, rel_path))
+
+    async def save_narration(self, world_id: str, step: int, data: dict[str, Any]) -> None:
+        self._narrations[(world_id, step)] = data
+
+    async def load_narration(self, world_id: str, step: int) -> Optional[dict[str, Any]]:
+        return self._narrations.get((world_id, step))

@@ -21,6 +21,7 @@ from engine.executors.simple import SimpleExecutor
 from engine.executors.social import SocialExecutor
 from engine.executors.work import WorkExecutor
 from core.interfaces.place import Place
+from tests.unit.check_fixtures import fixed_check
 
 
 def _directory() -> LiveWorldDirectory:
@@ -123,7 +124,7 @@ async def test_move_single_step_uses_world_connections_not_llm_estimate(containe
 async def test_work_passthrough_action_estimated_steps_4(container) -> None:
     env = _make_environment()
     action = _make_action(ActionType.WORK, estimated_steps=4)
-    executor = WorkExecutor(container.llm_router, _directory())
+    executor = WorkExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
     result = await executor.start(
         action, step=1, agents={"agent-1": _stub_agent("agent-1")},
         environment=env, message_system=None,  # type: ignore
@@ -149,7 +150,7 @@ async def test_rest_passthrough_action_estimated_steps_8(container) -> None:
 async def test_covert_passthrough_action_estimated_steps_3(container) -> None:
     env = _make_environment()
     action = _make_action(ActionType.COVERT, estimated_steps=3)
-    executor = CovertExecutor(container.llm_router, _directory())
+    executor = CovertExecutor(container.llm_router, _directory(), check_assessor=fixed_check())
     result = await executor.start(
         action, step=1, agents={"agent-1": _stub_agent("agent-1")},
         environment=env, message_system=None,  # type: ignore

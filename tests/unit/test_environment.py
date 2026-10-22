@@ -1290,7 +1290,7 @@ def test_a_place_and_a_thing_share_nothing_but_a_name() -> None:
 
 def test_a_thing_can_never_be_a_place() -> None:
     """The enum has no ``LOCATION`` value. The guard lives in the type, not at call sites."""
-    assert {t.value for t in WorldEntityType} == {"item", "landmark"}
+    assert {t.value for t in WorldEntityType} == {"item", "landmark", "money"}
 
 
 def test_making_a_thing_cannot_make_a_place() -> None:

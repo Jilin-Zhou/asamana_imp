@@ -68,6 +68,14 @@ python -m tuning audit <world-id> --scope mams,sams   # only some scopes
 
 Running a subset of scopes doesn't overwrite existing results for the others; the world score is always recomputed from all results. Results are saved under `data/traces/<world_id>/audit/`.
 
+### Action statistics
+
+Objective numbers for one world, counted straight from its snapshots without calling a model: how many acts of each type, their success rates, how many never engaged the world or were interrupted, and how the checks (dice rolls) fell across the five tiers. Run it before and after a change to compare.
+
+```bash
+python -m tuning stats <world-id>
+```
+
 ### Tuning the criteria
 
 The criteria for each dimension in each scope live in `tuning/audit_criteria.yaml`. Edit them and re-run — no code changes needed. Dimension definitions and weights are in `tuning/audit_metrics.py`.

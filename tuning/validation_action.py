@@ -138,7 +138,10 @@ def _deterministic_checks(phase: dict, agent_ids: set[str]) -> dict[str, Any]:
             if e.get("condition") and e.get("condition_cleared"):
                 v.append("target_effect 同时施加与解除处境")
         for c in r.get("entity_state_changes") or []:
-            if not str(c.get("new_state") or "").strip():
+            # A change that only moves the thing (taken, handed over, set down) keeps its state:
+            # an empty new_state means "unchanged" there (see EntityStateChange).
+            moved = c.get("owner_id") or c.get("location_id")
+            if not moved and not str(c.get("new_state") or "").strip():
                 v.append("entity_state_change new_state 为空")
         # Accepted-or-not must line up exactly with whether the errand exists in the world. Ruling "he set
         # off" without placing the errand forks the requester's memory from the world on the spot; ruling

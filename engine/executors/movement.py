@@ -43,7 +43,7 @@ def _arrival_steps(path: list[str], environment: "EnvironmentSystem", seconds_pe
     arrivals = [0]
     elapsed_seconds = 0
     for a, b in zip(path, path[1:]):
-        elapsed_seconds += environment.space.edge_seconds(a, b)
+        elapsed_seconds += environment.travel_seconds(environment.space.edge_seconds(a, b))
         arrivals.append(max(1, round(elapsed_seconds / seconds_per_step)))
     return arrivals
 

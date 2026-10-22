@@ -34,6 +34,7 @@ engine:
   max_events_per_window: 1
   event_quota_window: 8
   event_check_interval: 2
+  narration_enabled: false
   max_npcs: 3
 
 logging:

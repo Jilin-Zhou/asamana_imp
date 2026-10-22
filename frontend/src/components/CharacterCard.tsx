@@ -3,9 +3,12 @@
 // creation review (no liveStates: dossier open).
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import {
+  ATTRIBUTE_BASELINE, ATTRIBUTE_MAX, attributeLabel, attributeRows, attributeWord, skillWord,
+} from "../lib/ability";
 import { reportedDead, unfinishedGoals } from "../lib/agentState";
 import { avatarStyle, emotionColor } from "../lib/avatar";
-import type { AgentProfile, AgentStateSummary } from "../types";
+import type { AbilitiesView, AgentProfile, AgentStateSummary } from "../types";
 
 export interface CardAgent {
   id: string;
@@ -40,6 +43,47 @@ function DossierBlock({
         {icon} {title}
       </span>
       <p className="text-xs text-slate-300 leading-relaxed mt-0.5">{value || "—"}</p>
+    </div>
+  );
+}
+
+const PIP = { above: "bg-sky-400", below: "bg-rose-400/80", even: "bg-slate-400" } as const;
+const WORD = { above: "text-sky-300", below: "text-rose-300/80", even: "text-slate-500" } as const;
+
+// The five attributes as pips against the same scale for everyone (3 = an ordinary adult), then
+// the skills. Levels are build-time identity, so the panel never changes during a run.
+function AbilityBlock({ abilities }: { abilities?: AbilitiesView }) {
+  return (
+    <div className="bg-slate-950/50 border border-slate-800/70 rounded-lg px-2.5 py-2">
+      <span className="text-[10px] font-bold text-sky-400">💪 能力</span>
+      <div className="mt-1 grid grid-cols-[auto_auto_1fr] items-center gap-x-2 gap-y-0.5 text-xs">
+        {attributeRows(abilities).map(({ key, level }) => {
+          const tone = level > ATTRIBUTE_BASELINE ? "above" : level < ATTRIBUTE_BASELINE ? "below" : "even";
+          return (
+          <div key={key} className="contents">
+            <span className="text-slate-400">{attributeLabel(key)}</span>
+            <span className="flex gap-0.5" aria-label={`${level}/${ATTRIBUTE_MAX}`}>
+              {Array.from({ length: ATTRIBUTE_MAX }, (_, i) => (
+                <span
+                  key={i}
+                  className={`h-1.5 w-3 rounded-sm ${i < level ? PIP[tone] : "bg-slate-800"}`}
+                />
+              ))}
+            </span>
+            <span className={WORD[tone]}>{attributeWord(level)}</span>
+          </div>
+          );
+        })}
+      </div>
+      {!!abilities?.skills.length && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {abilities.skills.map((s) => (
+            <span key={s.name} className="text-[11px] px-1.5 py-0.5 rounded bg-sky-950/40 border border-sky-900/50 text-sky-200">
+              {s.name}·{skillWord(s.level)}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -114,6 +158,7 @@ export default function CharacterCard({
             self_image: "",
             life_goal: "",
             secret: "",
+            abilities: { attributes: {}, skills: [] },
             is_main_character: active?.is_main_character ?? false,
           },
         }));
@@ -274,6 +319,7 @@ export default function CharacterCard({
               {profile?.secret && (
                 <DossierBlock icon="🤫" title="秘密" color="text-rose-400" value={profile.secret} />
               )}
+              <AbilityBlock abilities={profile?.abilities} />
               <DossierBlock icon="🪞" title="自我认知" color="text-amber-400" value={profile?.self_image} />
               <DossierBlock icon="🧠" title="性格特点" color="text-violet-400" value={profile?.core_traits.join("、")} />
               <DossierBlock icon="💎" title="价值观" color="text-purple-400" value={profile?.core_values.join("、")} />

@@ -10,11 +10,13 @@ import DirectorBar from "../components/DirectorBar";
 import EditableWorldName from "../components/EditableWorldName";
 import NarrativeStep from "../components/narrative/NarrativeStep";
 import RelationshipGraph from "../components/RelationshipGraph";
+import TheaterScript from "../components/theater/TheaterScript";
 import WorldClock from "../components/WorldClock";
+import { useNarration } from "../hooks/useNarration";
 import { useStepPlayer } from "../hooks/useStepPlayer";
 import { NO_MODEL_KEYS_HINT, useModelKeys } from "../lib/deployment";
 import { useWorlds } from "../lib/worldsContext";
-import type { MapFocus, MapSelect, RunState, WorldMeta, WsFrame } from "../types";
+import type { MapFocus, MapSelect, NarrationScene, RunState, WorldMeta, WsFrame } from "../types";
 
 // Phaser is ~1.4 MB — load the 2D map only when its view is opened.
 const LiveWorldMap = lazy(() => import("../components/LiveWorldMap"));
@@ -58,6 +60,10 @@ function WorldObservation({ id, onReset }: { id: string; onReset: () => void }) 
   // map, and immersive collapses all chrome so the map fills the shell.
   const [rosterOpen, setRosterOpen] = useState(true); // left character drawer
   const [logOpen, setLogOpen] = useState(true); // right narrative drawer
+  // What the right drawer reads: the step record, or the narrator's script of it.
+  const [drawerView, setDrawerView] = useState<"record" | "theater">("record");
+  // Chase: each newly shown script flies the camera to its busiest scene.
+  const [chase, setChase] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false); // relationship-graph overlay
   // Body-chart overlay, of the selected agent. It shares the graph's place over the map, so
   // opening one closes the other.
@@ -100,6 +106,18 @@ function WorldObservation({ id, onReset }: { id: string; onReset: () => void }) 
     togglePlay,
   } = useStepPlayer(id, mode, graphOpen || bodyOpen); // the chart reads ties off the graph
 
+  const { scripts, onLiveScript } = useNarration(id);
+  // The script never runs ahead of the map: it is cut at the step the map shows, live or played.
+  const shownStep = displayStep?.step ?? 0;
+  const shownScripts = scripts.filter((s) => s.step <= shownStep);
+  const newestScript = shownScripts[shownScripts.length - 1];
+  const spotlight = (scene: NarrationScene) =>
+    setFocus({ agents: [], place: { kind: "location", id: scene.location_id }, follow: true });
+  useEffect(() => {
+    const scene = newestScript?.scenes[0];
+    if (chase && scene) spotlight(scene);
+  }, [chase, newestScript?.step]);
+
   const agents = displayStep ? Object.values(displayStep.agent_states) : [];
   const isBusy = ["running", "paused", "stopping"].includes(runState ?? "");
 
@@ -132,6 +150,7 @@ function WorldObservation({ id, onReset }: { id: string; onReset: () => void }) 
 
     const onFrame = (frame: WsFrame) => {
       if (frame.type === "status") setRunState(frame.data.status);
+      else if (frame.type === "narration") onLiveScript(frame.data);
       else onLiveStep(frame.data);
     };
     const socket = new WorldSocket(
@@ -515,13 +534,51 @@ function WorldObservation({ id, onReset }: { id: string; onReset: () => void }) 
 
         {showLog && (
           <aside className="hidden lg:flex flex-col bg-slate-900 border border-slate-800/80 rounded-2xl p-4 min-h-0">
-            <div className="flex items-center justify-between mb-3 shrink-0">
-              <h3 className="text-sm font-semibold tracking-wider text-slate-400 uppercase inline-flex items-center rounded-full bg-slate-800/60 border border-slate-700/60 px-4 py-1.5">📜 叙事流</h3>
+            <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
+              <div className="inline-flex rounded-full bg-slate-800/60 border border-slate-700/60 p-0.5">
+                {(
+                  [
+                    ["record", "📜 记录"],
+                    ["theater", "🎭 剧场"],
+                  ] as const
+                ).map(([view, label]) => (
+                  <button
+                    key={view}
+                    className={`text-xs font-semibold px-3 py-1 rounded-full transition ${
+                      drawerView === view ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:text-slate-200"
+                    }`}
+                    onClick={() => setDrawerView(view)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {drawerView === "theater" && (
+                <button
+                  className={`text-xs transition ${chase ? "text-amber-300" : "text-slate-500 hover:text-slate-200"}`}
+                  onClick={() => setChase((c) => !c)}
+                  title={chase ? "停止追光" : "追光：每一步的剧本到来时，镜头飞向最热闹的一场"}
+                >
+                  🔦 追光{chase ? "中" : ""}
+                </button>
+              )}
               <button className={COLLAPSE} onClick={() => setLogOpen(false)} title="收起叙事流">
                 收起 ›
               </button>
             </div>
-            <div className="min-h-0 overflow-y-auto pr-1">{feedList}</div>
+            <div className="min-h-0 overflow-y-auto pr-1">
+              {drawerView === "record" ? (
+                feedList
+              ) : (
+                <TheaterScript
+                  scripts={shownScripts}
+                  colorOf={(agentId) => displayStep?.agent_states[agentId]?.color}
+                  onSpotlight={spotlight}
+                  litPlace={focus.place?.id ?? null}
+                  follow={mode === "live"}
+                />
+              )}
+            </div>
           </aside>
         )}
       </div>

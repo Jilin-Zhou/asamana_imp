@@ -406,6 +406,26 @@ async def test_path3_threat_is_edge_triggered(container) -> None:
     assert len(spy.reasons) == 2
 
 
+@pytest.mark.asyncio
+async def test_an_agreed_time_arriving_asks_a_busy_agent_once(container) -> None:
+    """Path 4: the time he agreed on comes while he is busy; he weighs breaking off for it, on
+    that step only."""
+    from agent.goals import GoalEntity
+
+    runtime, registry = _build_runtime(container, "world-due")
+    agent = _build_agent(container, world_id="world-due", agent_id="mc", is_main=True)
+    _start_rest([agent], registry)
+    spy = _DecisionSpy((False, ""))
+    agent.evaluate_interrupt = spy  # type: ignore[method-assign]
+    agent.personality.set_short_term_goal_entities([
+        GoalEntity(id="g", text="午时去市署对账", goal_type="short_term", due_step=3),
+    ])
+    for step in (2, 3, 4):
+        await runtime._interrupts.evaluate_interrupts(MessageDelivery(step=step), [], {"mc": agent}, step=step)
+
+    assert spy.reasons == ["我约定的时刻到了：午时去市署对账"]
+
+
 # ---------------------------------------------------------------------------
 # Shared multi-participant action — interrupted once
 # ---------------------------------------------------------------------------
