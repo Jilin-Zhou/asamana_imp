@@ -142,6 +142,8 @@ async def test_paid_work_brings_in_what_the_narrator_rules(container) -> None:
     result, prompt = await _work(container, _ECONOMY, 80)
     assert result.earned == 80
     assert '"earned": 整数（按文计' in prompt and "一匹绢约600文" in prompt
+    # Work for someone in the story is his to pay face to face, not money from outside.
+    assert "替有名有姓的人干活" in prompt and "不能替有名有姓的人掏钱" in prompt
 
 
 @pytest.mark.asyncio

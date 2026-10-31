@@ -48,6 +48,8 @@ def _result_view(r: ActionResult, name_by_id: dict | None = None) -> dict[str, A
         "succeeded": r.succeeded,
         "failure_reason": r.failure_reason,
         "detected": r.detected,
+        # Money the act brought in from outside the world (paid work).
+        "earned": r.earned,
         # The roll behind ``succeeded``; code layer, shown to the reviewer, never to an agent.
         "check": r.check.to_dict() if r.check is not None else None,
         "factual_memory": r.factual_memory,

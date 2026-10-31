@@ -91,7 +91,8 @@ class WorkExecutor(ActionExecutor):
 
     In a world with money, work done as a trade (selling, treating, telling stories, hired
     labour) is paid by customers outside the simulation: the same account names the sum, which
-    enters the world. Capped by ``Economy.most_one_job_earns``: one runaway number would sit in a
+    enters the world. Work done for a character is not: he pays it himself, face to face (TRADE),
+    or the money would come from nowhere while his purse stays full. Capped by ``Economy.most_one_job_earns``: one runaway number would sit in a
     purse for the rest of the story.
     """
 
@@ -115,7 +116,14 @@ class WorkExecutor(ActionExecutor):
   收到的钱数,按{self._economy.unit or self._economy.currency}计的整数;要和这一回的结果、花掉的时间相称,
   参照行情:{self._economy.price_reference() or "无"}。挣到了钱,fact 里写明挣了多少。
   不是营生、或分文未得,填 0;东西做出来还没卖掉的,也是 0。
+  外头的主顾是没名没姓、来去一趟的人(过路客、病家、听书的);替有名有姓的人干活,填 0。
 """
+            if self._economy.has_money else ""
+        )
+        self._paid_by_others_rule = (
+            "- **不能替有名有姓的人掏钱**:替现场里的人、或我认得的人干活,他给不给工钱、给多少,"
+            "要他自己当面交到我手上才算;这一场里 fact、outcome 只写我干了什么、他当时怎么说,"
+            "不写他已经塞了钱、留了饭钱。\n"
             if self._economy.has_money else ""
         )
         self._earned_field = (
@@ -501,7 +509,7 @@ class WorkExecutor(ActionExecutor):
 - **不能把过程当成产出**:比如反复斟酌而始终拿不出任何实在的东西,那就是没成。
 - **不能把我想要的照抄成已经发生的**。
 - 不能替同处一地的人编造他们并没有做出的举动。
-
+""" + self._paid_by_others_rule + """
 【我记事的规矩】
 """ + CLOSED_WORLD_FACT_RULE_FIRST_PERSON + "\n" + ABSOLUTE_TIME_RULE_FIRST_PERSON + """
 
