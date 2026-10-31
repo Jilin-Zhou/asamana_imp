@@ -118,7 +118,7 @@ class ActionCandidate:
 # Static action catalog.  Behavior comes from the LLM's choice of type and
 # target, not from filtering this list at runtime.
 _ACTION_SPACE: List[ActionCandidate] = [
-    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（找一个人开口，可持续多步，生成完整对话，影响彼此关系；必须在同一地点）。在场的人可能走过来加入，交谈内容也可能被同一地点的人听到；要把人拉到一旁、背着旁人说，另填 talk_private。交谈只动嘴，不经手钱物：要当面给钱给东西、或向人要钱要东西，选 TRADE。"),
+    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（找一个人开口，可持续多步，生成完整对话，影响彼此关系；必须在同一地点）。在场的人可能走过来加入，交谈内容也可能被同一地点的人听到；话绝不能让在场任何人听见时，可以把人拉到一旁背着说，另填 talk_private。交谈只动嘴，不经手钱物：要当面给钱给东西、或向人要钱要东西，选 TRADE。"),
     ActionCandidate(ActionType.SEND_MESSAGE, "向特定角色发送异步消息（对方下一步收到），或向场景内所有人广播通知（当步生效）；适合单边传达任意意图，收件人不在场也能送达"),
     ActionCandidate(ActionType.MOVE,         "移动到一个可前往的地点；若这一动还要把在场的某人强行一并带走（不问他愿不愿意），另填 move_carry_indices"),
     ActionCandidate(ActionType.WORK,         "专注完成某一件自身的事情（写作、练习、制作、经营、整理等）"),
@@ -1200,7 +1200,7 @@ class DecisionEngine:
   "physical_entity_index": <若我选 PHYSICAL 且要**对物**动手：填"我够得着的东西"里那样东西的序号(1起)；对人动手则省略>,
   "physical_recipient_index": <仅当我这一动是把手中之物交到某人手上：填"我能触及的人"里某个标(在场)者的序号(1起)；只是把东西放下、或这一动与交付无关，一律省略>,
   "physical_covert": <仅当 PHYSICAL 落在一样东西上、而我要瞒着在场的人下手（偷、扒、顺手牵羊、悄悄塞到某人身上）：填 true；当众动手、或对人动手，一律省略>,
-  "talk_private": <仅当 TALK、而我要把对方拉到一旁背着在场的旁人说（借一步、附耳低语）：填 true，旁人就凑不进来；当着众人说、不怕人听，省略>,
+  "talk_private": <仅当 TALK、且要说的话绝不能让在场任何人听见（密谋、交底、托付要命的事）：填 true，旁人就凑不进来。背着人说本身就惹眼：旁人看得见我们躲到一旁嘀咕，凑不进来便会起疑。寻常的打听、试探、寒暄当着人说就是，省略>,
   "item_id": "<仅当 PHYSICAL 的目标不在上面两份名单里(抽象之物，如'门'、'地面')才自填名称，≤10字；能用序号就别用它；非 PHYSICAL 省略>",
   "physical_amount": <仅当 PHYSICAL 落在一堆钱上(physical_entity_index 指的是钱)：这一动涉及多少钱，按它的计数单位的整数——交出多少、拿走多少；整笔都算就省略>,
   "errand_npc_index": <若我选 ERRAND：填"此处听人吩咐做事的"里那个人的序号(1起)；否则省略。**必填**——这一动就是吩咐他去办，没有他就不成立>,
