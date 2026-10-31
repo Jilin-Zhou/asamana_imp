@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from agent.decision import ActionIntent, DecisionStatus
 from core.interfaces.action import ActionTarget, ActionType, AgentAction, Ref
 from core.interfaces.llm import LLMScene
 from engine.executors.social import SocialExecutor
@@ -207,5 +208,59 @@ async def test_anyone_breaking_off_ends_it_for_all_three(container) -> None:
 
 def test_a_deal_takes_no_walk_ins(container) -> None:
     trade = TradeExecutor(container.llm_router, _directory())
-    assert not trade.admits_joiner(2)
-    assert SocialExecutor(container.llm_router, _directory()).admits_joiner(3)
+    talk = _talk("agent-a", "agent-b", "商议")
+    assert not trade.admits_joiner(talk, 2)
+    assert SocialExecutor(container.llm_router, _directory()).admits_joiner(talk, 3)
+
+
+def _aside(actor: str, other: str, desc: str, *, steps: int = 2) -> AgentAction:
+    action = _talk(actor, other, desc, steps=steps)
+    action.intent = ActionIntent(purpose=desc, private=True)
+    return action
+
+
+@pytest.mark.asyncio
+async def test_a_talk_drawn_aside_this_step_turns_a_walk_in_away(container) -> None:
+    env, agents, rt = _palace(container, "world-aside", {"agent-a": "李世民", "agent-b": "常何", "agent-c": "尉迟恭"})
+    a, b, c = agents.values()
+    planned = [
+        ("main", a, _plan_for(a, _aside("agent-a", "agent-b", "把常何拉到一旁问值守"), env)),
+        ("main", b, _plan_for(b, None, env, decision_status=DecisionStatus.NOT_SCHEDULED)),
+        ("main", c, _plan_for(c, _talk("agent-c", "agent-b", "问常何今夜谁当值"), env)),
+    ]
+
+    arb, _ = await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
+
+    talk = rt._executor_registry.get_active_for_agent("agent-a")  # noqa: SLF001
+    assert talk.participant_ids == ["agent-a", "agent-b"]
+    assert "李世民把常何拉到一旁，低声说起话来" in arb["agent-a"].action_result.outcome
+    rejected = rt._executor_registry.get_active_for_agent("agent-c").extra["completed_result"]  # noqa: SLF001
+    assert "常何正与李世民背着人说话" in rejected.outcome
+
+
+@pytest.mark.asyncio
+async def test_a_talk_drawn_aside_earlier_turns_a_walk_in_away(container) -> None:
+    env, agents, rt = _palace(container, "world-aside-ongoing", {"agent-a": "李世民", "agent-b": "常何", "agent-c": "尉迟恭"})
+    executor = rt._executor_registry.get_executor(ActionType.TALK)  # noqa: SLF001
+    ongoing = await executor.start(
+        _aside("agent-a", "agent-b", "低声商议", steps=3), 0, agents=agents, environment=env, message_system=None,
+    )
+    rt._executor_registry.add_active(ongoing)  # noqa: SLF001
+    c = agents["agent-c"]
+    planned = [("main", c, _plan_for(c, _talk("agent-c", "agent-a", "向秦王请命"), env))]
+
+    await rt._arbiter.arbitrate(planned, agents, 1, {"agent-a", "agent-b"})  # noqa: SLF001
+
+    assert ongoing.participant_ids == ["agent-a", "agent-b"]
+    assert executor.join(ongoing, _talk("agent-c", "agent-a", "插话"), 1, environment=env) is None
+
+
+@pytest.mark.asyncio
+async def test_the_narrator_is_told_a_talk_was_drawn_aside(container) -> None:
+    provider, agents, env, executor, _state = await _three_way(container)
+    state = await executor.start(_aside("agent-a", "agent-b", "低声商议"), 1, agents=agents, environment=env, message_system=None)
+
+    before = len(provider.call_history)
+    await executor.complete(state, 2, agents=agents, environment=env, message_system=None)
+
+    assert "甲把乙拉到一旁，背着旁人低声说；旁人听不见。" in _joined(provider.call_history[before])

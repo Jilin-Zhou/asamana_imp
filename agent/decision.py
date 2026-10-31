@@ -95,6 +95,9 @@ class ActionIntent:
     # PHYSICAL on a thing: done unseen (stealing, planting), so only exposure tells anyone.
     covert: bool = False
 
+    # TALK: drawn aside, out of others' hearing, so nobody walks into it.
+    private: bool = False
+
     # TRADE: what is offered and asked for.
     trade: "TradeTerms | None" = None
 
@@ -115,7 +118,7 @@ class ActionCandidate:
 # Static action catalog.  Behavior comes from the LLM's choice of type and
 # target, not from filtering this list at runtime.
 _ACTION_SPACE: List[ActionCandidate] = [
-    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（1v1，双方共同参与多步完成，生成完整对话，影响双边关系；必须在同一地点），但是交谈内容有可能会被同一地点的人听到。交谈只动嘴，不经手钱物：要当面给钱给东西、或向人要钱要东西，选 TRADE。"),
+    ActionCandidate(ActionType.TALK,         "与当前场景中某个可见角色面对面同步交谈（找一个人开口，可持续多步，生成完整对话，影响彼此关系；必须在同一地点）。在场的人可能走过来加入，交谈内容也可能被同一地点的人听到；要把人拉到一旁、背着旁人说，另填 talk_private。交谈只动嘴，不经手钱物：要当面给钱给东西、或向人要钱要东西，选 TRADE。"),
     ActionCandidate(ActionType.SEND_MESSAGE, "向特定角色发送异步消息（对方下一步收到），或向场景内所有人广播通知（当步生效）；适合单边传达任意意图，收件人不在场也能送达"),
     ActionCandidate(ActionType.MOVE,         "移动到一个可前往的地点；若这一动还要把在场的某人强行一并带走（不问他愿不愿意），另填 move_carry_indices"),
     ActionCandidate(ActionType.WORK,         "专注完成某一件自身的事情（写作、练习、制作、经营、整理等）"),
@@ -184,6 +187,8 @@ class LLMSelection:
     amount: int | None = None
     # PHYSICAL on a thing only: done unseen.
     covert: bool = False
+    # TALK only: out of others' hearing.
+    private: bool = False
     # TRADE only: what is offered and asked for.
     trade: "TradeTerms | None" = None
 
@@ -285,6 +290,7 @@ class _Bound:
     errand: "ErrandOrder | None" = None
     amount: int | None = None
     covert: bool = False
+    private: bool = False
     trade: "TradeTerms | None" = None
 
 
@@ -330,7 +336,9 @@ def _bind_talk(slots: _Slots) -> "_Bound | None":
         if people else ActionTarget()
     )
     spoken = _text(slots.payload, "message_content")
-    return _Bound(target, f"（我打算说：{spoken}）" if spoken else "")
+    return _Bound(
+        target, f"（我打算说：{spoken}）" if spoken else "", private=slots.flag("talk_private"),
+    )
 
 
 def _bind_covert(slots: _Slots) -> "_Bound | None":
@@ -655,6 +663,7 @@ class DecisionEngine:
             errand=selection.errand,
             amount=selection.amount,
             covert=selection.covert,
+            private=selection.private,
             trade=selection.trade,
         )
         return AgentAction(
@@ -796,7 +805,8 @@ class DecisionEngine:
                     # may each carry a bracketed date (ABSOLUTE_TIME_RULE, ≈8 chars×3 ≈36 tok) → ~416.
                     # Per-type extras are mutually exclusive: PHYSICAL recipient index ≈11 or
                     # item_id≤10 chars ≈20 → ≤~436; MOVE move_carry_indices ≈12 → ~439; SEND
-                    # message_announce ≈8 → ~447; PHYSICAL on money adds physical_amount ≈8 and a covert flag ≈8; TRADE
+                    # message_announce ≈8 → ~447; PHYSICAL on money adds physical_amount ≈8 and a covert flag ≈8;
+                    # TALK talk_private ≈8; TRADE
                     # five number fields ≈55 → ~471. ERRAND is costliest: ~416 + errand_message≤60
                     # chars ≈90 + four index fields ≈44 + errand_announce ≈8 + errand_amount ≈8 → ~566.
                     max_tokens=output_budget(566),
@@ -1190,6 +1200,7 @@ class DecisionEngine:
   "physical_entity_index": <若我选 PHYSICAL 且要**对物**动手：填"我够得着的东西"里那样东西的序号(1起)；对人动手则省略>,
   "physical_recipient_index": <仅当我这一动是把手中之物交到某人手上：填"我能触及的人"里某个标(在场)者的序号(1起)；只是把东西放下、或这一动与交付无关，一律省略>,
   "physical_covert": <仅当 PHYSICAL 落在一样东西上、而我要瞒着在场的人下手（偷、扒、顺手牵羊、悄悄塞到某人身上）：填 true；当众动手、或对人动手，一律省略>,
+  "talk_private": <仅当 TALK、而我要把对方拉到一旁背着在场的旁人说（借一步、附耳低语）：填 true，旁人就凑不进来；当着众人说、不怕人听，省略>,
   "item_id": "<仅当 PHYSICAL 的目标不在上面两份名单里(抽象之物，如'门'、'地面')才自填名称，≤10字；能用序号就别用它；非 PHYSICAL 省略>",
   "physical_amount": <仅当 PHYSICAL 落在一堆钱上(physical_entity_index 指的是钱)：这一动涉及多少钱，按它的计数单位的整数——交出多少、拿走多少；整笔都算就省略>,
   "errand_npc_index": <若我选 ERRAND：填"此处听人吩咐做事的"里那个人的序号(1起)；否则省略。**必填**——这一动就是吩咐他去办，没有他就不成立>,
@@ -1296,6 +1307,7 @@ class DecisionEngine:
             errand=bound.errand,
             amount=bound.amount,
             covert=bound.covert,
+            private=bound.private,
             trade=bound.trade,
             action_description=description.strip() + bound.description_suffix,
             inner_monologue=inner_monologue,

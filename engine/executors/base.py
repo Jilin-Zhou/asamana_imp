@@ -354,9 +354,10 @@ class ActionExecutor(ABC):
         """
         return []
 
-    def admits_joiner(self, parties: int) -> bool:
-        """Whether someone deciding this same act toward a body already inside such an execution
-        of ``parties`` people walks into it instead of being turned away. Default: never."""
+    def admits_joiner(self, host: "AgentAction | ActionExecutionState", parties: int) -> bool:
+        """Whether someone deciding this same act toward a body inside ``host`` (an act admitted
+        this step, or an execution under way) of ``parties`` people walks into it instead of
+        being turned away. Default: never."""
         return False
 
     def join(

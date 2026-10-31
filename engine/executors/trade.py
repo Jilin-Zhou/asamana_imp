@@ -99,7 +99,7 @@ class TradeExecutor(SocialExecutor):
         )
         self._economy = economy if economy is not None else Economy()
 
-    def admits_joiner(self, parties: int) -> bool:
+    def admits_joiner(self, host: "AgentAction | ActionExecutionState", parties: int) -> bool:
         return False
 
     async def start(

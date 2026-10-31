@@ -28,6 +28,7 @@ from engine.executors.base import (
     participant_target,
 )
 from engine.executors.registry import ActionExecutorRegistry
+from engine.executors.social import is_private
 from engine.message_system import MessageSystem
 
 if TYPE_CHECKING:
@@ -512,14 +513,16 @@ class ExecutionArbiter:
             adm = admissions[owner]
             if adm.action.action_type is not action.action_type:
                 return None
+            host: AgentAction | ActionExecutionState = adm.action
             host_key, parties = owner, 1 + len(adm.co_participants)
         else:
             ongoing = self._executor_registry.get_active_for_agent(body)
             if ongoing is None or ongoing.action_type is not action.action_type:
                 return None
+            host = ongoing
             host_key, parties = ongoing.execution_id, len(ongoing.participant_ids)
         parties += sum(1 for join in joins.values() if join.host_key == host_key)
-        if not executor.admits_joiner(parties):
+        if not executor.admits_joiner(host, parties):
             return None
         return _Join(host_body=body, host_key=host_key, reason=reason)
 
@@ -836,6 +839,7 @@ class ExecutionArbiter:
             action_type = adm.action.action_type
             members = [owner, *adm.co_participants]
             key = owner
+            aside = is_private(adm.action)
         else:
             exec_state = self._executor_registry.get_active_for_agent(host)
             if exec_state is None:
@@ -843,12 +847,13 @@ class ExecutionArbiter:
             action_type = exec_state.action_type
             members = list(exec_state.participant_ids)
             key = exec_state.execution_id
+            aside = is_private(exec_state)
         members += [j for j, join in joins.items() if join.host_key == key]
         if action_type == ActionType.TALK:
             partners = [p for p in members if p != pid]
             if partners:
                 who = "、".join(self._directory.agent_name(p) for p in partners)
-                return f"{name}正与{who}交谈"
+                return f"{name}正与{who}背着人说话" if aside else f"{name}正与{who}交谈"
         return f"{name}{_BUSY_WITH.get(action_type, _BUSY_UNSEEN)}"
 
     def _rejected_result(

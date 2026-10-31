@@ -1364,6 +1364,16 @@ def test_only_a_thing_can_be_worked_on_unseen(container: object) -> None:
     assert in_the_open is not None and not in_the_open.covert
 
 
+def test_a_talk_can_be_drawn_aside(container: object) -> None:
+    """Talking out of others' hearing is TALK's own flag; left out, the talk is open."""
+    engine = _make_engine(container)
+    packet = _make_packet(visible_agent_ids=["agent-2"])
+    aside = _sel(engine, {"person_indices": [1], "talk_private": True}, ActionType.TALK, packet)
+    assert aside is not None and aside.private
+    open_talk = _sel(engine, {"person_indices": [1]}, ActionType.TALK, packet)
+    assert open_talk is not None and not open_talk.private
+
+
 def test_a_carried_body_must_be_here_and_never_costs_the_whole_beat(container: object) -> None:
     """Carrying is an extra on top of a move: absent or out-of-range indices are ignored one by
     one, and the move itself still stands."""

@@ -77,6 +77,13 @@ _ABOUT_ADDRESSED_K = 5
 _ABOUT_OTHER_K = 3
 
 
+def is_private(host: "AgentAction | ActionExecutionState") -> bool:
+    """A talk drawn aside, out of others' hearing: nobody walks into it."""
+    if isinstance(host, ActionExecutionState):
+        return bool(host.extra.get("private"))
+    return bool(getattr(host.intent, "private", False))
+
+
 def _empty_ctx() -> dict[str, Any]:
     return {"others": [], "about_topic": [], "recent": []}
 
@@ -264,7 +271,8 @@ class SocialExecutor(ActionExecutor):
     """Executor for TALK actions.
 
     - Started 1v1. Someone deciding to talk with a participant walks into the conversation
-      instead of being turned away (``admits_joiner`` / ``join``), up to ``_MAX_TALK_PARTIES``.
+      instead of being turned away (``admits_joiner`` / ``join``), up to ``_MAX_TALK_PARTIES``,
+      unless it was drawn aside (``is_private``).
       Extra people named become listeners (ActionTarget.reaches): their bodies stay free and
       they only get an overheard TargetAgentEffect. Group announcements belong to SEND_MESSAGE.
     - The whole dialogue is generated once at complete(); ticks are content-free.
@@ -305,8 +313,8 @@ class SocialExecutor(ActionExecutor):
             return []
         return [target_ids[0]]
 
-    def admits_joiner(self, parties: int) -> bool:
-        return parties < _MAX_TALK_PARTIES
+    def admits_joiner(self, host: "AgentAction | ActionExecutionState", parties: int) -> bool:
+        return parties < _MAX_TALK_PARTIES and not is_private(host)
 
     def join(
         self,
@@ -319,7 +327,7 @@ class SocialExecutor(ActionExecutor):
         """Walk ``action``'s actor into this conversation. Arbitration checked he stands with the
         one he went up to; what the others make of him is the dialogue's to tell."""
         joiner_id = action.agent_id
-        if joiner_id in state.participant_ids or not self.admits_joiner(len(state.participant_ids)):
+        if joiner_id in state.participant_ids or not self.admits_joiner(state, len(state.participant_ids)):
             return None
         talkers = _name_list([self._directory.agent_name(pid) for pid in state.participant_ids])
         state.participant_ids.append(joiner_id)
@@ -366,8 +374,12 @@ class SocialExecutor(ActionExecutor):
         participant_ids = [action.agent_id, target_ids[0]]
         initiator_name = self._directory.agent_name(action.agent_id)
         target_name = self._directory.agent_name(target_ids[0])
+        private = is_private(action)
         # The opening is public; the privileged transcript appears only in complete's outcome.
-        opening = scene_line(location, f"{initiator_name}与{target_name}开始聊了起来。")
+        opening = scene_line(location, (
+            f"{initiator_name}把{target_name}拉到一旁，低声说起话来。" if private
+            else f"{initiator_name}与{target_name}开始聊了起来。"
+        ))
         state = ActionExecutionState.create(
             action_type=ActionType.TALK,
             initiator_id=action.agent_id,
@@ -385,6 +397,7 @@ class SocialExecutor(ActionExecutor):
             ),
         )
         state.extra["target_id"] = target_ids[0]
+        state.extra["private"] = private
         return state
 
     def _failed_result(self, action: AgentAction, step: int, outcome: str, location: str) -> ActionExecutionState:
@@ -536,6 +549,7 @@ class SocialExecutor(ActionExecutor):
             dialogue, bystander_view = await self._llm_full_dialogue(
                 speakers=speakers,
                 purpose=state.purpose,
+                private=is_private(state),
                 expected_outcome=state.expected_outcome,
                 # Don't use min(estimated_steps, MAX): a 1-step TALK would become a monologue.
                 turns=_MAX_DIALOGUE_TURNS + _TURNS_PER_JOINER * (len(speakers) - 2),
@@ -974,6 +988,7 @@ class SocialExecutor(ActionExecutor):
         turns: int,
         scene: str,
         now_step: int,
+        private: bool = False,
     ) -> tuple[list[dict], str]:
         """Generate the full conversation in one functional call.
 
@@ -1005,6 +1020,7 @@ class SocialExecutor(ActionExecutor):
         names = {party.agent_id: party.name for _a, party, _c in speakers}
         addressed_name = names.get(initiator.addressed_id, "对方")
         expected_part = f"\n对话发起者的期望：{expected_outcome}" if expected_outcome else ""
+        aside_part = f"\n{initiator.name}把{addressed_name}拉到一旁，背着旁人低声说；旁人听不见。" if private else ""
         scene_part = f"\n【现场】\n{scene}" if scene else ""
         joiner_lines = [
             f"- {party.name}走过来找{names.get(party.addressed_id, '他们')}，想「{party.description}」。"
@@ -1030,7 +1046,7 @@ class SocialExecutor(ActionExecutor):
 {legend_block}{lane_blocks}
 
 【对话目的】（以下是{initiator.name}单方面的说法与盘算，既非已定的事实，也非这场交谈该有的结局）
-{initiator.name}想就「{purpose}」与{addressed_name}交谈。{expected_part}{joiner_part}{scene_part}
+{initiator.name}想就「{purpose}」与{addressed_name}交谈。{expected_part}{aside_part}{joiner_part}{scene_part}
 
 【轮数上限】
 至多 {turns} 轮，可更少；谈完即止。
@@ -1044,6 +1060,7 @@ class SocialExecutor(ActionExecutor):
             facts
             .add("对话目的", f"{initiator.name}想就「{purpose}」与{addressed_name}交谈。")
             .add("发起者的期望", expected_outcome)
+            .add("背着旁人", aside_part)
             .add("中途加入", "\n".join(joiner_lines))
             .add("现场", scene)
             .add("轮数上限", turns)
