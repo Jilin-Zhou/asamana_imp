@@ -26,6 +26,7 @@ from engine.npc_runner import NpcRunner
 from providers.message.in_memory import InMemoryMessageProvider
 from world.models import EntityPresence, NpcSeed, WorldEntity, WorldEntityType
 from core.interfaces.place import Place
+from tests.unit.check_fixtures import fixed_check
 
 
 class _FixedLLM:
@@ -863,7 +864,7 @@ async def test_a_body_can_be_held_down_without_losing_what_it_was_sent_to_do() -
         '"target_condition":"被死死按住","target_condition_steps":0}'
     )
     directory = LiveWorldDirectory.from_agents({}, env)
-    executor = PhysicalExecutor(llm, directory)
+    executor = PhysicalExecutor(llm, directory, check_assessor=fixed_check())
     action = AgentAction(
         agent_id="a1", step=1, action_type=_AT.PHYSICAL,
         action_description="按住那个正要出门的人",
@@ -912,7 +913,7 @@ async def test_a_body_that_cannot_struggle_is_not_held_for_good() -> None:
         '"target_condition":"被死死按住","target_condition_steps":0}'
     )
     executor = PhysicalExecutor(
-        llm, LiveWorldDirectory.from_agents({}, env), seconds_per_step=3600,
+        llm, LiveWorldDirectory.from_agents({}, env), seconds_per_step=3600, check_assessor=fixed_check(),
     )
     action = AgentAction(
         agent_id="a1", step=1, action_type=_AT.PHYSICAL,
@@ -1054,7 +1055,7 @@ async def test_the_judge_is_told_the_body_it_judges_has_no_will() -> None:
         purpose="按住他", started_step=1, estimated_steps=1, opening_outcome="",
         target=ActionTarget(acts_on=[Ref.npc(npc_id)]),
     )
-    executor = PhysicalExecutor(_FixedLLM("{}"), LiveWorldDirectory.from_agents({}, env))
+    executor = PhysicalExecutor(_FixedLLM("{}"), LiveWorldDirectory.from_agents({}, env), check_assessor=fixed_check())
     subject = await executor._resolve_subject(  # noqa: SLF001
         state, agents={}, environment=env, step=1,
     )
@@ -1346,3 +1347,42 @@ def test_the_report_carries_no_judge_premise() -> None:
         visibility=SceneVisibility.OWN_EYES,
     ).text
     assert _ORDINARY_FIXTURES_LINE in judged
+
+
+@pytest.mark.asyncio
+async def test_a_runner_carries_the_sum_he_was_given_and_hands_over_exactly_that() -> None:
+    """Part of a purse travels as its own pile with its own id: the runner hands over what he
+    carries, not the pile the order first named (that stayed behind with the rest)."""
+    from core.interfaces.economy import Economy
+
+    env = _world()
+    env.economy = Economy(currency="银子", unit="两")
+    npc_id = _bearer(env)
+    env.place_agent(agent_id="a1", location_id="hall")
+    env.place_agent(agent_id="a2", location_id="gate")
+    env.add_money(30, holder_id="a1")
+    purse = env.purse_of("a1").entity_id
+    result = (await _run_errand(env, ErrandOrder(npc_id, "gate", item_id=purse, recipient_id="a2", amount=12), actor_id="a1"))[0]
+    for change in result.entity_state_changes:
+        env.change_entity_state(change, acting_agent_id="a1")
+    assert (env.money_of("a1"), env.money_of(npc_id)) == (18, 12)
+    assert "12两银子" in result.outcome
+
+    runner, messages = _runner(env)
+    await _run_full_errand(runner)
+    assert (env.money_of(npc_id), env.money_of("a2")) == (0, 12)
+    report = [m for m in await messages.collect(step=4) if m.recipients == ["a1"]][0].content
+    assert "12两银子已交到" in report, report
+
+
+@pytest.mark.asyncio
+async def test_a_whole_purse_sent_without_a_sum_goes_whole() -> None:
+    env = _world()
+    npc_id = _bearer(env)
+    env.place_agent(agent_id="a1", location_id="hall")
+    env.add_money(30, holder_id="a1")
+    purse = env.purse_of("a1").entity_id
+    result = (await _run_errand(env, ErrandOrder(npc_id, "gate", item_id=purse), actor_id="a1"))[0]
+    for change in result.entity_state_changes:
+        env.change_entity_state(change, acting_agent_id="a1")
+    assert (env.money_of("a1"), env.money_of(npc_id)) == (0, 30)

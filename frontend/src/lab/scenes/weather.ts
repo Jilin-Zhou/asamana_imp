@@ -28,7 +28,26 @@ const SCOPES = [
 
 /** Weather ("天象"): the only visual the engine names, and the only one it names from a closed set. */
 export function buildWeatherScenes({ open: OPEN }: LabPlaces): LabScene[] {
+  const here = () => [who(MO, OPEN), who(SHI, OPEN)];
   return [
+    // The world's standing sky (`StepEvent.weather`): no broadcast, just the condition each step
+    // runs under.
+    {
+      id: "weather-sky",
+      group: "天象",
+      title: "天气（世界的天色，逐步持续）",
+      watch:
+        "第二、三步都是中雨：雨应当**一直下**，跨过步与步的交界不断档、不重新起势。" +
+        "第四步转成大雪：雨收尾、雪起势。最后一步放晴：雪不再落新的，天上的各自落完。" +
+        "全程没有字幕板——天色是条件，不是消息。",
+      steps: [
+        step({ states: here() }),
+        step({ states: here(), weather: { sky: "rain", severity: "medium" } }),
+        step({ states: here(), weather: { sky: "rain", severity: "medium" } }),
+        step({ states: here(), weather: { sky: "snow", severity: "high" } }),
+        step({ states: here(), weather: { sky: "clear", severity: "low" } }),
+      ],
+    },
     // A phenomenon is a fact from a closed vocabulary (`core/interfaces/phenomenon.py`), never a
     // rendering instruction. It rides the broadcast, the senderless place-scoped channel and the
     // only one the map resolves to coordinates.

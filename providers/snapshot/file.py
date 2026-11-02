@@ -42,6 +42,7 @@ class FileSnapshotProvider(SnapshotProvider):
     Layout::
 
         {path}/{world_id}/step_{step:06d}.json
+        {path}/{world_id}/narration/step_{step:06d}.json
     """
 
     def __init__(self, path: str = "./data/snapshots") -> None:
@@ -63,6 +64,9 @@ class FileSnapshotProvider(SnapshotProvider):
 
     def _world_map_path(self, world_id: str) -> Path:
         return self._world_dir(world_id) / "world_map.json"
+
+    def _narration_path(self, world_id: str, step: int) -> Path:
+        return self._world_dir(world_id) / "narration" / f"step_{step:06d}.json"
 
     @staticmethod
     def _serialize(snapshot: WorldSnapshot) -> str:
@@ -140,8 +144,11 @@ class FileSnapshotProvider(SnapshotProvider):
 
     async def delete_steps_after(self, world_id: str, step: int) -> None:
         steps = await self.list_steps(world_id)
+        narrated = await asyncio.to_thread(self._scan_steps, self._world_dir(world_id) / "narration")
         await asyncio.to_thread(
-            self._unlink_steps, [self._snapshot_path(world_id, s) for s in steps if s > step]
+            self._unlink_steps,
+            [self._snapshot_path(world_id, s) for s in steps if s > step]
+            + [self._narration_path(world_id, s) for s in narrated if s > step],
         )
         logger.info(
             "snapshots_deleted_after_step",
@@ -186,6 +193,14 @@ class FileSnapshotProvider(SnapshotProvider):
 
     async def load_world_map(self, world_id: str) -> Optional[dict[str, Any]]:
         return await asyncio.to_thread(read_json_file, self._world_map_path(world_id))
+
+    async def save_narration(self, world_id: str, step: int, data: dict[str, Any]) -> None:
+        target = self._narration_path(world_id, step)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(atomic_write_text, target, dump_json(data))
+
+    async def load_narration(self, world_id: str, step: int) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(read_json_file, self._narration_path(world_id, step))
 
     def _world_asset_path(self, world_id: str, rel_path: str) -> Optional[Path]:
         """Resolve a frozen asset, or None if the path tries to leave the world's dir.

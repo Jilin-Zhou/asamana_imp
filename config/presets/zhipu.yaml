@@ -40,6 +40,10 @@ llm:
       provider: zhipu_pro
     cast_design:
       provider: zhipu_pro
+    ability_design:
+      provider: zhipu_pro
+    event_deck_design:
+      provider: zhipu_pro
     world_building:
       provider: zhipu_pro
       # Required. The 60s default can't cover "thousands of tokens of search results +

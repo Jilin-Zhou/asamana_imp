@@ -9,6 +9,7 @@ import { type LabScene, resetFixtures } from "./fixtures";
 import { buildMovementScenes } from "./movement";
 import { buildPhysicalScenes } from "./physical";
 import { buildSpeechScenes } from "./speech";
+import { buildTradeScenes } from "./trade";
 import { buildCovertScenes } from "./covert";
 import { buildOngoingScenes } from "./ongoing";
 import { buildMadeScenes } from "./made";
@@ -32,6 +33,7 @@ export function buildScenes(places: LabPlaces): LabScene[] {
     ...buildMovementScenes(places),
     ...buildPhysicalScenes(places),
     ...buildSpeechScenes(places),
+    ...buildTradeScenes(places),
     ...buildCovertScenes(places),
     ...buildOngoingScenes(places),
     ...buildPocketScenes(places),

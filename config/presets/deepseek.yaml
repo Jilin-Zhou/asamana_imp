@@ -40,6 +40,10 @@ llm:
       provider: deepseek_pro
     cast_design:
       provider: deepseek_pro
+    ability_design:
+      provider: deepseek_pro
+    event_deck_design:
+      provider: deepseek_pro
     world_building:
       provider: deepseek_pro
       # Required. The 60s default can't cover the world build's "thousands of tokens of JSON"; it timed out twice

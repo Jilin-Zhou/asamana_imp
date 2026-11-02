@@ -321,6 +321,10 @@ class LLMScene(str, Enum):
     # can run cheap; it also keeps map selection out of theme-analysis traces.
     WORLD_TEMPLATE_SELECTION = "world_template_selection"
     CAST_DESIGN = "cast_design"
+    # Rates the whole cast's attributes, skills and cash in one call, after the personas exist.
+    ABILITY_DESIGN = "ability_design"
+    # Writes the world's event deck (engine.event_deck) at build.
+    EVENT_DECK_DESIGN = "event_deck_design"
     WORLD_PRESSURE = "world_pressure"
     AGENT_INTERRUPT_DECISION = "agent_interrupt_decision"
     # MEMORY_IMPORTANCE: scores a memory's importance [0,1] at write time; drives decay/retrieval/compression.
@@ -330,6 +334,9 @@ class LLMScene(str, Enum):
     # Periodic relation-label evolution: re-assess a relation's labels from recent memory; outputs a
     # full replacement list.
     RELATION_LABEL_EVOLUTION = "relation_label_evolution"
+    # The stage narrator: writes each step up as a scene for the audience. Its own scene so it can
+    # route to a model chosen for prose; nothing it writes feeds back into the simulation.
+    STAGE_NARRATION = "stage_narration"
 
 
 @dataclass

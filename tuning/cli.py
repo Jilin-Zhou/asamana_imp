@@ -13,6 +13,7 @@
                                                #   [--steps 1-10] [--judge-model <m>]
     python -m tuning progress "<world_id>"     # cross-scene progress of repeated talks between the same pair (LLM judge)
                                                #   [--limit N] [--judge-model <m>]
+    python -m tuning stats "<world_id>"        # action types, success rates and check tiers (snapshots, no LLM)
 
 Bootstraps its own config + container (see ``bootstrap_application`` below for why
 it must not share the production entrypoint's). Reports are browsed in the web dev
@@ -37,6 +38,7 @@ from tuning.build_harness import run_build
 from tuning.phase_harness.plan_step import run_plan_step
 from tuning.scenario_store import ScenarioError
 from tuning.stages import all_stages, stage, stage_keys, write_scenario_subset
+from tuning.action_stats import action_stats
 from tuning.audit import run_audit
 from tuning.judge_dialogue_leak import run_dialogue_leak
 from tuning.judge_dialogue_progress import run_dialogue_progress
@@ -258,6 +260,19 @@ async def _cmd_dialogue_progress(world_id: str, judge_model: str | None) -> int:
     return 0
 
 
+async def _cmd_stats(world_id: str) -> int:
+    _, container = bootstrap_application()
+    snapshots = [
+        snap for step in await container.snapshot.list_steps(world_id)
+        if (snap := await container.snapshot.load(world_id, step)) is not None
+    ]
+    if not snapshots:
+        print(f"no snapshots for world {world_id!r}", file=sys.stderr)
+        return 1
+    print(json.dumps(action_stats(snapshots), ensure_ascii=False, indent=2))
+    return 0
+
+
 def _parse_flag_str(args: list[str], flag: str, *, default: str | None) -> str | None:
     for i, tok in enumerate(args):
         if tok == flag and i + 1 < len(args):
@@ -267,7 +282,7 @@ def _parse_flag_str(args: list[str], flag: str, *, default: str | None) -> str |
 
 def main(argv: list[str]) -> int:
     if not argv:
-        print("Usage: python -m tuning <build|plan|stages|validate|audit|leak|progress> [args]",
+        print("Usage: python -m tuning <build|plan|stages|validate|audit|leak|progress|stats> [args]",
               file=sys.stderr)
         return 1
     command, rest = argv[0], argv[1:]
@@ -323,5 +338,10 @@ def main(argv: list[str]) -> int:
             return 1
         return asyncio.run(_cmd_dialogue_progress(
             rest[0], _parse_flag_str(rest[1:], "--judge-model", default=None)))
+    if command == "stats":
+        if not rest:
+            print('Usage: python -m tuning stats "<world_id>"', file=sys.stderr)
+            return 1
+        return asyncio.run(_cmd_stats(rest[0]))
     print(f"Unknown command: {command!r}", file=sys.stderr)
     return 1

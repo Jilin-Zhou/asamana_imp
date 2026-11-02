@@ -196,6 +196,9 @@ class EngineConfig(AsamanaConfigModel):
     max_events_per_window: int = Field(default=2, ge=0)
     event_quota_window: int = Field(default=20, gt=0)
     event_check_interval: int = Field(default=6, gt=0)
+    # The stage narrator (engine/stage_narrator.py): one extra LLM call per step, for the
+    # audience only. Off saves its tokens and leaves the record view.
+    narration_enabled: bool = Field(default=True)
     # AgentScheduler's gate: an idle agent with no pressure, urgent need or strong emotion is pulled
     # back into decision at least every this many steps. Set in world time (one step = one hour,
     # a waking day ≈ 16 hours). Don't use these to patch problems in the gate's other criteria.

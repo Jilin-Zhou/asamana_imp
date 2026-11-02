@@ -6,13 +6,14 @@ symbolic state into a map on the client; a text view ignores the geometry.
 
 The WebSocket pushes off the in-process event bus (subscribe, not poll): on
 connect it sends the latest persisted step and current run state, then forwards
-each live ``step`` and ``status`` event for its world.
+each live ``step``, ``narration`` and ``status`` event for its world.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from core.interfaces.ability import Abilities
 from core.logging import get_logger
 
 # WebSocket must be importable at module scope: with `from __future__ import annotations`,
@@ -27,6 +28,7 @@ from interaction.models import (
     AgentProfile,
     GraphNode,
     StepEvent,
+    StepNarration,
     WorldGraph,
     relations_from_snapshot,
 )
@@ -60,6 +62,25 @@ def build_observe_router(services: ApiServices) -> Any:
     @router.get("/api/worlds/{world_id}/steps/{step}")
     async def get_step(world_id: str, step: int) -> dict[str, Any]:
         return await _step_payload(world_id, step)
+
+    # ----- stage narration ------------------------------------------------
+
+    @router.get("/api/worlds/{world_id}/narration")
+    async def list_narration(
+        world_id: str, since: int = 1, until: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """The scripts of the steps in [since, until] that have one, in step order. A step the
+        narrator never wrote up (narration off, a failed call, a world from before) is absent."""
+        steps = [
+            s for s in await manager.list_steps(world_id)
+            if s >= since and (until is None or s <= until)
+        ]
+        scripts = []
+        for step in steps:
+            saved = await manager.snapshot_provider.load_narration(world_id, step)
+            if saved:
+                scripts.append(to_jsonable(StepNarration.from_payload(saved)))
+        return scripts
 
     # ----- relationship graph ---------------------------------------------
 
@@ -100,6 +121,9 @@ def build_observe_router(services: ApiServices) -> Any:
             self_image=entry.get("self_image", ""),
             life_goal=entry.get("life_goal", ""),
             secret=entry.get("secret", ""),
+            # Re-read rather than passed through, so a world built before abilities shows the
+            # baseline it actually runs on.
+            abilities=Abilities.from_dict(entry.get("abilities")).to_dict(),
             is_main_character=bool(entry.get("is_main_character", False)),
         )
 
@@ -195,6 +219,11 @@ def build_observe_router(services: ApiServices) -> Any:
                         if se.step <= sent_step:
                             continue
                         await websocket.send_json({"type": "step", "data": to_jsonable(se)})
+                    elif etype == "narration":
+                        await websocket.send_json(
+                            {"type": "narration",
+                             "data": to_jsonable(StepNarration.from_payload(event.get("data") or {}))}
+                        )
                     elif etype == "status":
                         await websocket.send_json(
                             {"type": "status",

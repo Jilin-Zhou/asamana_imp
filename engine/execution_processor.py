@@ -274,18 +274,29 @@ class ExecutionProcessor:
         await self._land_results_grouped(exec_states, results_by_exec, agents_dict, step)
         return results_by_exec
 
-    @staticmethod
-    def _result_conflict_keys(result: ActionResult) -> set[str]:
+    def _result_conflict_keys(self, result: ActionResult) -> set[str]:
         """What one result changes when it lands; results with disjoint keys may land
         concurrently.
 
         ``entity_spawns`` yields no key: no other result can refer to a new thing, and
         ``spawn_entity`` has no await, so concurrent groups can't interleave inside it."""
         keys: set[str] = {result.action.agent_id}
+        if result.earned:
+            keys.add("purse:" + result.action.agent_id)
         for effect in result.target_effects:
             keys.add(effect.agent_id)
         for change in result.entity_state_changes:
             keys.add("item:" + change.entity_id)
+            # A pile of money is a purse: earnings and trades name it so, and under two names
+            # a theft of it and earnings into it would land in either order.
+            pile = self._environment.get_entity(change.entity_id)
+            if pile is not None and pile.is_money:
+                keys.update("purse:" + holder for holder in (pile.owner_id, change.owner_id) if holder)
+        for transfer in result.transfers:
+            keys.update(
+                {"item:" + transfer.entity_id} if transfer.entity_id
+                else {"purse:" + transfer.from_id, "purse:" + transfer.to_id}
+            )
         # A body's condition can change only once per beat. Errands aren't keyed: they land in
         # the world in ``ErrandExecutor.start``, and landing never touches them.
         for npc_effect in result.npc_effects:
@@ -420,6 +431,15 @@ class ExecutionProcessor:
                     "entity_state_change_failed",
                     extra={"agent_id": result.action.agent_id, "step": step, "error": str(exc)},
                 )
+        if result.transfers and not self._environment.transfer_all(result.transfers):
+            # Something changed hands earlier this beat; the whole exchange is void, though the
+            # haggling it narrates did happen.
+            logger.warning(
+                "trade_transfer_void",
+                extra={"agent_id": result.action.agent_id, "step": step},
+            )
+        if result.earned > 0:
+            self._environment.add_money(result.earned, holder_id=result.action.agent_id)
         for spawn in result.entity_spawns:
             try:
                 # A refusal is legitimate, but memory already says "I made it", so log at error
@@ -622,6 +642,10 @@ class ExecutionProcessor:
             "adjudication_failed": result.adjudication_failed,  # null steps aren't carried
             "not_executed": result.not_executed,  # unmet-precondition non-event (muted when rendered)
             "dialogue": list(result.dialogue),
+            # Money this act brought into the world (paid work); 0 for nearly every act.
+            "earned": result.earned,
+            # The roll behind ``succeeded``; code layer, for the observer only.
+            "check": result.check.to_dict() if result.check is not None else None,
             # From landed effects (what happened), not exec_state's list (intent). Kept apart
             # from participant_ids: listeners didn't spend their turn.
             "overheard_by": [e.agent_id for e in result.target_effects if e.overheard],

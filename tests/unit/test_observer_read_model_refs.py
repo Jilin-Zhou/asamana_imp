@@ -99,8 +99,7 @@ def test_dialogue_turns_name_their_speaker_by_id() -> None:
 def test_talk_transcript_is_tagged_with_speaker_ids() -> None:
     turns = SocialExecutor._parse_dialogue(
         {"dialogue": [{"speaker": 1, "line": "来了"}, {"speaker": 2, "line": "嗯"}]},
-        ("a", "甲"),
-        ("b", "乙"),
+        [("a", "甲"), ("b", "乙")],
     )
 
     assert turns == [

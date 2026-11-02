@@ -8,6 +8,7 @@ import pytest
 
 from core.interfaces.llm import LLMRouter, LLMScene
 from providers.llm.mock import MockLLMProvider
+from tests.build_stubs import MOCK_ABILITY_DESIGN_RESPONSE, MOCK_EVENT_DECK_RESPONSE
 from tuning.build_harness import run_build
 from tuning.trace import InMemoryTraceSink
 from tuning.validation import _deterministic_checks, validate_world_pressure
@@ -59,6 +60,8 @@ async def test_validate_world_pressure_writes_reports_and_runs_checks(
     providers = {scene: MockLLMProvider(fixed_response="{}") for scene in LLMScene}
     providers[LLMScene.WORLD_BUILDING] = MockLLMProvider(fixed_response=_WORLD_RESPONSE)
     providers[LLMScene.CAST_DESIGN] = MockLLMProvider(fixed_response=_CAST_RESPONSE)
+    providers[LLMScene.ABILITY_DESIGN] = MockLLMProvider(fixed_response=MOCK_ABILITY_DESIGN_RESPONSE)
+    providers[LLMScene.EVENT_DECK_DESIGN] = MockLLMProvider(fixed_response=MOCK_EVENT_DECK_RESPONSE)
     providers[LLMScene.WORLD_PRESSURE] = MockLLMProvider(fixed_response=_PRESSURE_RESPONSE)
     container.llm_router = LLMRouter(providers)
 

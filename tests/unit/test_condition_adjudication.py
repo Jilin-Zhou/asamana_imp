@@ -19,6 +19,8 @@ from core.interfaces.condition import BodyCondition
 from engine.directory import LiveWorldDirectory
 from engine.environment import EnvironmentSystem
 from engine.executors.physical import PhysicalExecutor
+from tests.unit.check_fixtures import fixed_check
+from core.interfaces.check import CheckTier
 
 BOUND = BodyCondition(description="双手被反绑", source_agent_id="a1", since_step=10)
 
@@ -56,7 +58,7 @@ class _Agent:
 def _executor(payload: str) -> tuple[PhysicalExecutor, _ScriptedLLM]:
     llm = _ScriptedLLM(payload)
     ex = PhysicalExecutor(
-        llm, LiveWorldDirectory.from_agents({}, EnvironmentSystem()), seconds_per_step=3600,
+        llm, LiveWorldDirectory.from_agents({}, EnvironmentSystem()), seconds_per_step=3600, check_assessor=fixed_check(),
     )
     return ex, llm
 
@@ -74,7 +76,7 @@ def _verdict_payload(**over) -> str:
 async def _judge(payload: str, *, is_person: bool = True, step: int = 34):
     ex, llm = _executor(payload)
     verdict = await ex._judge(
-        _Agent("a1", "甲"), description="再捆他的腿", expected_outcome="", scene="",
+        _Agent("a1", "甲"), tier=CheckTier.SUCCESS, description="再捆他的腿", expected_outcome="", scene="",
         target_block="乙（人）", is_person=is_person, has_entity=False,
         seize_available=False, actor_holds=False,
         needs_relation=is_person, recipient_line="", step=step,
@@ -104,7 +106,7 @@ async def test_the_actor_block_states_the_actor_condition() -> None:
     know what he's struggling against and for how long to rule whether he breaks free."""
     ex, llm = _executor(_verdict_payload())
     await ex._judge(
-        _Agent("a2", "乙", BOUND), description="奋力挣脱绳索", expected_outcome="", scene="",
+        _Agent("a2", "乙", BOUND), tier=CheckTier.SUCCESS, description="奋力挣脱绳索", expected_outcome="", scene="",
         target_block="绳索", is_person=False, has_entity=False, seize_available=False,
         actor_holds=False, needs_relation=False, recipient_line="", step=34,
     )
@@ -118,7 +120,7 @@ async def test_an_unconditioned_party_adds_no_line_at_all() -> None:
     for everyone."""
     ex, llm = _executor(_verdict_payload())
     await ex._judge(
-        _Agent("a1", "甲"), description="推他一把", expected_outcome="", scene="",
+        _Agent("a1", "甲"), tier=CheckTier.SUCCESS, description="推他一把", expected_outcome="", scene="",
         target_block="乙（人）", is_person=True, has_entity=False, seize_available=False,
         actor_holds=False, needs_relation=True, recipient_line="", step=3,
     )

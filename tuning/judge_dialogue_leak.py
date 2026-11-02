@@ -68,6 +68,8 @@ def extract_dialogues(world_id: str, *, trace_dir: str = "data/traces",
             lanes = (rec.get("extra") or {}).get("dialogue_lanes")
             if not isinstance(lanes, dict) or not ("a" in lanes and "b" in lanes):
                 continue                      # not a dialogue call (narration shares the same scene)
+            if len(lanes) > 2:
+                continue                      # a group talk: the verdict reads exactly two columns
             try:
                 data = extract_json(rec.get("response_content", ""))
             except (json.JSONDecodeError, ValueError):

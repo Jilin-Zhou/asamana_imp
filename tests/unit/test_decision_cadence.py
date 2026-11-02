@@ -425,3 +425,25 @@ def test_collateral_participant_takes_the_ordinary_gate() -> None:
         interrupters={"a"},                # but only a is the one who chose to stop
     )
     assert [a.agent_id for a in plan.ordered_agents()] == ["a"]
+
+
+def test_an_appointment_coming_due_admits_once() -> None:
+    """A character who set a time is asked to think when it comes, once, even with nothing
+    else stirring; a goal not yet due, or one whose time he has already decided at, admits
+    nothing."""
+    from agent.goals import GoalEntity
+
+    gate = AgentScheduler(main_max_idle_steps=9, background_max_idle_steps=9)
+
+    def keeper(*, due: int | None, last: int = 1) -> _StubAgent:
+        agent = _StubAgent("a", last_decision_step=last)
+        agent.personality.state.short_term_goal_entities = [
+            GoalEntity(id="g", text="午时去市署对账", goal_type="short_term", due_step=due),
+        ]
+        return agent
+
+    assert gate._should_decide(keeper(due=3), step=3) is CadenceReason.DUE  # noqa: SLF001
+    assert gate._should_decide(keeper(due=3), step=5) is CadenceReason.DUE  # noqa: SLF001
+    assert gate._should_decide(keeper(due=4), step=3) is None  # noqa: SLF001
+    assert gate._should_decide(keeper(due=3, last=3), step=4) is None  # noqa: SLF001
+    assert gate._should_decide(keeper(due=None), step=3) is None  # noqa: SLF001

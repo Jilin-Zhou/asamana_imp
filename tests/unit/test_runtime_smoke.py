@@ -116,6 +116,7 @@ def _build_runtime(
     world_id: str,
     registry: "ActionExecutorRegistry | None" = None,
     trace_sink=None,
+    narration_enabled: bool = False,
 ) -> tuple[NarrativeRuntime, EnvironmentSystem, MessageSystem]:
     environment = EnvironmentSystem(TiledWorldConfig(template="changan_iso"))
     message_system = MessageSystem(
@@ -146,6 +147,7 @@ def _build_runtime(
         pressure_evaluator=_SignalPressure(),
         trace_sink=trace_sink,
         llm_router=container.llm_router,
+        narration_enabled=narration_enabled,
     )
     return runtime, environment, message_system
 
@@ -276,6 +278,34 @@ async def test_narrative_runtime_runs_one_step_and_persists_contract_state(conta
     assert event["messages"] == snapshot.metadata["messages"]
     assert event["events"] == []
     assert event["environment"] == snapshot.metadata["environment"]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_step_reaches_the_narrator_with_its_records(container, monkeypatch) -> None:
+    """The narrator gets exactly what the snapshot keeps, after the step is saved, and the
+    step does not wait for it."""
+    from engine.stage_narrator import StageNarrator
+
+    written = []
+
+    async def _capture(self, material) -> None:  # noqa: ANN001
+        written.append(material)
+
+    monkeypatch.setattr(StageNarrator, "_narrate", _capture)
+    world_id = "world-narrated"
+    runtime, environment, _ = _build_runtime(container, world_id=world_id, narration_enabled=True)
+    environment.place_agent(agent_id="agent-1", location_id="palace")
+    agents = [_build_agent(container, world_id=world_id, agent_id="agent-1", name="Li Shimin", is_main_character=True)]
+    _set_work_decision(container)
+
+    await runtime.run_step(agents)
+    await runtime._narrator.drain()  # noqa: SLF001
+    snapshot = await container.snapshot.load(world_id, 1)
+    [material] = written
+    assert material.step == 1
+    assert list(material.actions) == snapshot.agent_summaries
+    assert material.time_label == snapshot.time_label
+    await runtime.aclose()
 
 
 @pytest.mark.asyncio
@@ -1387,10 +1417,10 @@ async def test_deeper_starvation_goes_first_between_two_starved_agents(container
 
     arb, _ = await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
     b_exec = rt._executor_registry.get_active_for_agent("agent-b")  # noqa: SLF001
-    assert b_exec is not None and "agent-c" in b_exec.participant_ids
-    a_exec = rt._executor_registry.get_active_for_agent("agent-a")  # noqa: SLF001
-    assert a_exec is not None and a_exec.participant_ids == ["agent-a"]
-    assert "常何正与张婕妤交谈" in a_exec.extra["completed_result"].outcome
+    assert b_exec is not None and b_exec.initiator_id == "agent-b" and "agent-c" in b_exec.participant_ids
+    # The one starved less walks into that conversation rather than starting his own.
+    assert rt._executor_registry.get_active_for_agent("agent-a") is b_exec  # noqa: SLF001
+    assert "agent-a" in b_exec.joined
 
 
 @pytest.mark.asyncio
@@ -1453,7 +1483,7 @@ def test_busy_reason_says_what_the_body_is_visibly_doing(container) -> None:
     busy(ActionType.COVERT, "agent-d")
 
     def reason(pid):
-        return rt._arbiter._busy_reason(pid, {}, {})  # noqa: SLF001
+        return rt._arbiter._busy_reason(pid, {}, {}, {})  # noqa: SLF001
 
     assert reason("agent-a") == "李世民正与常何交谈"
     assert reason("agent-c") == "尉迟恭正在歇息"
@@ -1749,18 +1779,19 @@ async def test_a_body_one_initiator_could_not_take_is_taken_by_the_next(containe
     }
     rt = _arb_runtime(container, world_id, agents, env)
 
-    def talk(actor, other, desc):
-        return AgentAction(agent_id=actor, step=1, action_type=ActionType.TALK, action_description=desc,
+    def talk(actor, other, desc, action_type=ActionType.TALK):
+        return AgentAction(agent_id=actor, step=1, action_type=action_type, action_description=desc,
                            target=ActionTarget(acts_on=[Ref.agent(other)], claims=[Ref.agent(other)]),
                            estimated_steps=1)
 
     a, b, c, d = (agents[k] for k in ids)
     # Initiative: Yuanji, under pressure, goes first; the rest share a tier, in input order Shimin →
-    # Li Yuan → Yuchi.
+    # Li Yuan → Yuchi. The Prince of Qin's handover can't walk into a conversation, so it is turned
+    # away.
     planned = [
         ("main", a, _plan_for(a, talk("agent-a", "agent-c", "向父皇哭诉求救"), env,
                               external_goals=[_pressure(Urgency.CRITICAL)])),
-        ("main", b, _plan_for(b, talk("agent-b", "agent-c", "向父皇陈明元吉谋逆"), env)),
+        ("main", b, _plan_for(b, talk("agent-b", "agent-c", "把兵符呈给父皇", ActionType.TRADE), env)),
         ("main", c, _plan_for(c, talk("agent-c", "agent-b", "质问秦王为何兵戈相向"), env)),
         ("main", d, _plan_for(d, talk("agent-d", "agent-b", "向秦王禀报宫中情形"), env)),
     ]
@@ -1795,7 +1826,7 @@ async def test_a_body_one_initiator_could_not_take_is_taken_by_the_next(containe
 
     await rt._commit_execution(planned, arb, agents)  # noqa: SLF001
     assert any("质问秦王" in t for t in c.memory_system.recent_foiled_attempts(1))
-    assert any("陈明元吉谋逆" in t for t in b.memory_system.recent_foiled_attempts(1))
+    assert any("兵符呈给父皇" in t for t in b.memory_system.recent_foiled_attempts(1))
 
 
 @pytest.mark.asyncio

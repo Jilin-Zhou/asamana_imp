@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Mapping
+from typing import Dict, List, Mapping, Sequence
 
 from core.interfaces.action import (
-    EntitySpawn, EntityStateChange, ErrandOrder, NpcEffect,
+    EntitySpawn, EntityStateChange, ErrandOrder, NpcEffect, Transfer,
     errand_from_dict, errand_to_dict,
 )
+from core.interfaces.economy import Economy
 from core.interfaces.condition import condition_from_dict, condition_to_dict
 from core.interfaces.perception import (
     PerceivedNpc, PerceivedPresence,
@@ -18,6 +19,7 @@ from core.logging import get_logger
 from core.text import slugify
 from engine.clock import WorldTime
 from engine.space import SpaceManager
+from engine.weather import Weather
 from world.models import (
     ActiveErrand,
     BodyKind,
@@ -62,6 +64,9 @@ MAX_VISIBLE_ENTITIES = 15
 
 # Larger than the actor's menu: a judge missing a thing rules as if it weren't in the room.
 MAX_SCENE_ENTITIES = 30
+
+# What anyone but the holder sees of a purse: that it's there, not how much is in it.
+OTHERS_PURSE = "一只钱袋，看不出装了多少"
 
 # The most Npcs a world can hold (prompt space: each crowds the co-located list). Per world
 # because they move. Default only; the real value comes from ``engine.max_npcs``.
@@ -191,8 +196,11 @@ class EnvironmentSystem:
         self, world_config: object | None = None, *,
         max_entities_per_place: int = MAX_ENTITIES_PER_PLACE,
         max_npcs: int = DEFAULT_MAX_NPCS,
+        economy: Economy | None = None,
     ) -> None:
         self.world_config = world_config
+        # How amounts of money read; a world without money never has a MONEY pile.
+        self.economy = economy if economy is not None else Economy()
         self._max_entities_per_place = max_entities_per_place
         self._max_npcs = max_npcs
         self.space = SpaceManager()
@@ -230,6 +238,7 @@ class EnvironmentSystem:
         self._current_step = 0
         self._current_world_time_label = ""
         self._current_world_time_hour = -1
+        self._weather: Weather | None = None
         self._load_places(world_config)
 
     def place_agent(self, *, agent_id: str, location_id: str) -> None:
@@ -469,6 +478,9 @@ class EnvironmentSystem:
         holder_id = spawn.holder_id
         try:
             entity_type = WorldEntityType(spawn.entity_type)
+            # Money is never made from nothing: piles only split and merge (see _move_money).
+            if entity_type is WorldEntityType.MONEY:
+                raise ValueError(spawn.entity_type)
         except ValueError:
             # ``"location"`` lands here too: places must not be created this way.
             logger.warning(
@@ -555,6 +567,32 @@ class EnvironmentSystem:
         # Capture the scope before mutation: a held item that gets destroyed
         # loses its location, so the observation must fall back to where it was.
         prior_location = entity.location_id
+        # Money's name and description are its currency and amount: only placement changes.
+        if entity.is_money and not change.destroyed:
+            if change.owner_id is not None or change.location_id is not None:
+                self._move_money(entity, change)
+        else:
+            self._edit_entity(entity, change)
+
+        if change.perception:
+            scope = (
+                change.perception_scope
+                or (acting_agent_id and self._locations.get(acting_agent_id))
+                or prior_location
+                or ""
+            )
+            if scope:
+                # Carry, not the current layer: this step's perception is already taken.
+                # actor_ids keeps the actor from perceiving his own change.
+                self.record_carry_observation(
+                    location_id=scope,
+                    observation=change.perception,
+                    actor_ids=(acting_agent_id,),
+                )
+
+        return True
+
+    def _edit_entity(self, entity: WorldEntity, change: EntityStateChange) -> None:
         # Empty = leave it alone (see EntityStateChange).
         if change.new_name:
             entity.name = change.new_name
@@ -578,23 +616,106 @@ class EnvironmentSystem:
             # the ground would be invisible to everyone forever.
             entity.is_public = True
 
-        if change.perception:
-            scope = (
-                change.perception_scope
-                or (acting_agent_id and self._locations.get(acting_agent_id))
-                or prior_location
-                or ""
-            )
-            if scope:
-                # Carry, not the current layer: this step's perception is already taken.
-                # actor_ids keeps the actor from perceiving his own change.
-                self.record_carry_observation(
-                    location_id=scope,
-                    observation=change.perception,
-                    actor_ids=(acting_agent_id,),
-                )
-
+    def transfer_all(self, transfers: Sequence[Transfer]) -> bool:
+        """Land an exchange whole or not at all. Everything must still be in the giver's hands,
+        and every sum in his purse, when it lands: whatever moved in the meantime voids it all."""
+        for t in transfers:
+            if not t.entity_id:
+                if (t.quantity or 0) <= 0 or self.money_of(t.from_id) < (t.quantity or 0):
+                    return False
+                continue
+            entity = self._items.get(t.entity_id)
+            if entity is None or entity.owner_id != t.from_id or not entity.is_takeable:
+                return False
+        for t in transfers:
+            pile = self._money_pile(holder_id=t.from_id) if not t.entity_id else None
+            entity_id = pile.entity_id if pile is not None else t.entity_id
+            self.change_entity_state(EntityStateChange(entity_id=entity_id, owner_id=t.to_id, quantity=t.quantity))
         return True
+
+    def _money_pile(self, *, holder_id: str | None = None, location_id: str | None = None) -> WorldEntity | None:
+        """The one pile in these hands or on this ground, if any."""
+        for e in self._items.values():
+            if not e.is_money:
+                continue
+            if holder_id is not None and e.owner_id == holder_id:
+                return e
+            if location_id is not None and e.owner_id is None and e.location_id == location_id:
+                return e
+        return None
+
+    def money_of(self, holder_id: str) -> int:
+        pile = self._money_pile(holder_id=holder_id)
+        return pile.quantity if pile is not None else 0
+
+    def purse_of(self, holder_id: str) -> WorldEntity | None:
+        """The pile this body carries: what to hand over when money is to change hands, since a
+        split or merge may have given it a different id than the one an order named."""
+        return self._money_pile(holder_id=holder_id)
+
+    def _set_quantity(self, pile: WorldEntity, quantity: int) -> None:
+        """Keep the amount and its words together; an emptied pile leaves the world (no
+        tombstone: there was never anything to remember it by)."""
+        if quantity <= 0:
+            self._items.pop(pile.entity_id, None)
+            self._entities.pop(pile.entity_id, None)
+            return
+        pile.quantity = quantity
+        pile.description = self.economy.amount_text(quantity)
+
+    def add_money(self, quantity: int, *, holder_id: str | None = None, location_id: str | None = None) -> None:
+        """Put money into the world: the build's cash, or a split pile's new half. Merges into
+        the pile already there, so each holder and place keeps one."""
+        if quantity <= 0:
+            return
+        existing = self._money_pile(holder_id=holder_id, location_id=location_id)
+        if existing is not None:
+            self._set_quantity(existing, existing.quantity + quantity)
+            return
+        suffix = 1
+        while f"money-{self._current_step}-{suffix}" in self._entities:
+            suffix += 1
+        held = holder_id is not None
+        pile = WorldEntity(
+            entity_id=f"money-{self._current_step}-{suffix}",
+            name=self.economy.currency or "钱",
+            entity_type=WorldEntityType.MONEY,
+            presence=EntityPresence.HELD if held else EntityPresence.AT_LOCATION,
+            presence_ref=holder_id if held else location_id,
+            is_takeable=True,
+            created_step=self._current_step,
+        )
+        self.register_entity(pile)
+        self._set_quantity(pile, quantity)
+
+    def take_money(self, holder_id: str, quantity: int) -> int:
+        """Take up to ``quantity`` out of this holder's purse and out of the world (living costs
+        paid to people nobody models); returns how much there was to take."""
+        pile = self._money_pile(holder_id=holder_id)
+        if pile is None or quantity <= 0:
+            return 0
+        taken = min(quantity, pile.quantity)
+        self._set_quantity(pile, pile.quantity - taken)
+        return taken
+
+    def _move_money(self, pile: WorldEntity, change: EntityStateChange) -> None:
+        """Move all or part of a pile; it merges into whatever pile is already at the other end."""
+        amount = pile.quantity if change.quantity is None else max(0, min(change.quantity, pile.quantity))
+        if amount <= 0:
+            return
+        to_holder = change.owner_id
+        to_place = change.location_id if to_holder is None else None
+        destination = self._money_pile(holder_id=to_holder, location_id=to_place)
+        if destination is pile:
+            return
+        if destination is None and amount == pile.quantity:
+            # The whole pile goes and nothing waits there: it simply moves.
+            pile.presence = EntityPresence.HELD if to_holder is not None else EntityPresence.AT_LOCATION
+            pile.presence_ref = to_holder if to_holder is not None else to_place
+            pile.is_public = True
+            return
+        self._set_quantity(pile, pile.quantity - amount)
+        self.add_money(amount, holder_id=to_holder, location_id=to_place)
 
     def get_items_at(self, location_id: str) -> List[WorldEntity]:
         """Return the entities lying at a location — not the ones in somebody's hands."""
@@ -616,7 +737,11 @@ class EnvironmentSystem:
             name=entity.name,
             entity_type=entity.entity_type.value,
             state=entity.state,
-            description=entity.description,
+            # How much is in someone else's purse can't be seen; on the ground it can.
+            description=(
+                OTHERS_PURSE if entity.is_money and entity.owner_id not in (None, viewer_id)
+                else entity.description
+            ),
             is_takeable=entity.is_takeable,
             holder_id=entity.owner_id,
             content=entity.content if entity.readable_by(viewer_id) else "",
@@ -750,7 +875,7 @@ class EnvironmentSystem:
 
         return FeasibilityResult(
             ok=True, reason="", resolved_id=to_id, path=tuple(path),
-            travel_seconds=self.space.reachable_from(from_id).get(to_id, 0),
+            travel_seconds=self.travel_seconds(self.space.reachable_from(from_id).get(to_id, 0)),
         )
 
     def check_talk_feasibility(
@@ -787,11 +912,34 @@ class EnvironmentSystem:
         anchors in adjudication prompts."""
         return self._current_world_time_label
 
-    def begin_step(self, *, step: int, world_time: WorldTime) -> None:
-        """Flip carry buffers into the active step layer (see the class docstring)."""
+    @property
+    def current_weather_label(self) -> str:
+        """The sky in words, cached by begin_step; empty for a world without weather."""
+        return self._weather.describe() if self._weather is not None else ""
+
+    @property
+    def travel_factor(self) -> float:
+        """How much the sky stretches every journey this step (heavy rain, heavy snow)."""
+        return self._weather.travel_factor if self._weather is not None else 1.0
+
+    def travel_seconds(self, seconds: int) -> int:
+        return round(seconds * self.travel_factor)
+
+    def begin_step(
+        self, *, step: int, world_time: WorldTime, weather: Weather | None = None, weather_notice: str = "",
+    ) -> None:
+        """Flip carry buffers into the active step layer (see the class docstring).
+
+        ``weather_notice`` is the sky turning this step: an ambient at every place, since
+        everyone is under the one sky.
+        """
         self._current_step = step
         self._current_world_time_label = world_time.time_label
         self._current_world_time_hour = world_time.hour_of_day
+        self._weather = weather
+        if weather_notice:
+            for location_id in self.space.all_place_ids():
+                self.record_carry_observation(location_id=location_id, observation=weather_notice)
         self._npc_outcomes = {}
         self._npc_displaced = set()
         self._step_annotations = {k: list(v) for k, v in self._carry_annotations.items()}
@@ -896,6 +1044,7 @@ class EnvironmentSystem:
                 world_time_label=world_time or self._current_world_time_label,
                 current_step=step if step is not None else self._current_step,
                 world_time_hour=self._current_world_time_hour,
+                weather_label=self.current_weather_label,
                 visible_agents={},
                 # What he carries; empty would make carried things vanish on the road.
                 visible_entities=[
@@ -941,7 +1090,7 @@ class EnvironmentSystem:
             ReachableLocation(
                 location_id=nid,
                 view=self.location_view(nid),
-                travel_seconds=reachable_seconds[nid],
+                travel_seconds=self.travel_seconds(reachable_seconds[nid]),
             )
             for nid in reachable_ids
         ]
@@ -951,6 +1100,7 @@ class EnvironmentSystem:
             world_time_label=world_time or self._current_world_time_label,
             current_step=step if step is not None else self._current_step,
             world_time_hour=self._current_world_time_hour,
+            weather_label=self.current_weather_label,
             visible_agents=visible_agents,
             visible_npcs=visible_npcs,
             visible_entities=visible_entities,
@@ -1000,6 +1150,7 @@ class EnvironmentSystem:
                     "is_public": e.is_public,
                     "created_step": e.created_step,
                     "content": e.content,
+                    "quantity": e.quantity,
                 }
                 for eid, e in sorted(self._entities.items())
             },
@@ -1077,6 +1228,7 @@ class EnvironmentSystem:
                     is_public=bool(payload.get("is_public", True)),
                     created_step=int(payload.get("created_step", 0) or 0),
                     content=str(payload.get("content", "")),
+                    quantity=int(payload.get("quantity", 0) or 0),
                 )
             )
 

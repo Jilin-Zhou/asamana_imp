@@ -63,6 +63,8 @@ _GOAL_EVALUATION_SYSTEM = """\
 - **警惕「永远 active」**：目标文本后可能标着它「已历约多久仍未了结」。若一个目标已历时明显偏久、且轨迹显示反复推进却始终停在原地（结果一再未达预期、状态毫无实质变化），说明当前手段对它无效——判 failed（搁置），不要无限 active。一个推进不动的目标会锁死后续认知。判 failed（搁置）时，reason 必须点明「反复无进展」的具体依据，落在已记录的轨迹 / 时长上，不臆测。
 - 但别矫枉过正：真正在**逐步推进**（每步能看到可见进展、只是尚未跨过完成线）的多步目标保持 active——搁置只针对「原地打转」，不是「还没做完」；拿不准是「有进展但慢」还是「原地打转」时，倾向保留 active。
 - 判断之前先明确好当前时间和当前地点，避免在结果中涉及到时间问题时出现错乱的情况。
+- 所给的地点是一大片地方，里头还有许多具体的去处（某间铺子、某处衙署、某个角落）。目标里说的去处若就在被评判者
+  此刻所在的这片地方里头，他人在这里、又办了目标说的事，就算到过那个去处，不因结果没写出那个小去处判 failed。
 - **每个目标必须把判断依据(reason)写在最前面，再给序号(index)与状态(status)——先分析后定状态，不要凭空直接给状态。**
 - 只输出 JSON，不要任何多余内容。
 
@@ -311,6 +313,10 @@ _NEED_REST_BASELINE: float = 0.3
 _NEED_HOMEOSTASIS_RATE: float = 0.25
 _NEED_SUCCESS_RELIEF: float = 0.12
 _NEED_FAILURE_PRESSURE: float = 0.08
+# A day with none of its living paid. Enough to lift a rested physiological need past the
+# starvation line (engine.death_handler) for a while; homeostasis brings it back unless the
+# next day is short too.
+_NEED_SHORT_PRESSURE: float = 0.35
 
 
 # Maslow prepotency: additive scoring has no crisis priority, so collapse-level physiological activation
@@ -657,6 +663,17 @@ class NeedEngine:
             relaxed = intensity + _NEED_HOMEOSTASIS_RATE * (_NEED_REST_BASELINE - intensity)
             this_shock = shock if key == dominant_key else 0.0
             updated[key] = clamp(relaxed + this_shock, 0.05, 1.0)
+        return updated
+
+    def go_short(self, current: Dict[str, float], *, shortfall: float) -> Dict[str, float]:
+        """Need intensities after a day whose living was paid only in part — **pure**.
+        ``shortfall`` is the unpaid share, 0..1; it presses on the physiological need alone."""
+        key = NeedType.PHYSIOLOGICAL.value
+        updated = dict(current)
+        updated[key] = clamp(
+            current.get(key, _NEED_REST_BASELINE) + _NEED_SHORT_PRESSURE * clamp(shortfall, 0.0, 1.0),
+            0.05, 1.0,
+        )
         return updated
 
     async def evaluate_goal_progress(

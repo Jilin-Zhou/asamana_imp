@@ -155,6 +155,7 @@ def _event_system(
             max_events_per_window=kwargs.get("max_events_per_window", 2),
             quota_window=kwargs.get("quota_window", 20),
             check_interval=kwargs.get("check_interval", 6),
+            deck=kwargs.get("deck", ()),
         ),
     )
 

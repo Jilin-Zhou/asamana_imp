@@ -1195,7 +1195,7 @@ def _mams_phase_lines(s: dict[str, Any], name: str, *, sps: Any) -> list[str]:
 
 
 def _mams_script_lines(actor: str, s: dict[str, Any]) -> list[str]:
-    """God's-eye script: TALK's actual dialogue (speaker 1 = initiator, 2 = other party, resolved to names).
+    """God's-eye script: TALK's actual dialogue, each speaker number resolved to a name.
     mams is the director's view and needs to read what was actually said to judge the narrative, so
     there's no viewpoint filtering here; every line is laid out. Words sent out (letters / messages
     carried by errand-runners) aren't here; they travel with "what he does".
@@ -1207,14 +1207,21 @@ def _mams_script_lines(actor: str, s: dict[str, Any]) -> list[str]:
     for phase in (s.get("carried"), s):
         if not isinstance(phase, dict):
             continue
-        dlg = next((r.get("dialogue") for r in (phase.get("results") or []) if r.get("dialogue")), None)
+        said = next((r for r in (phase.get("results") or []) if r.get("dialogue")), None)
+        dlg = said.get("dialogue") if said else None
         if isinstance(dlg, list) and dlg:
             target = (phase.get("decision") or {}).get("target") or phase.get("peer")
             break
     else:
         dlg = None
     if isinstance(dlg, list) and dlg:
-        who = {1: actor, 2: str(target) if target else "对方"}
+        # The lanes' names when the call recorded them (any number of speakers, any order);
+        # older traces only know the initiator and one other party.
+        speakers = said.get("speakers") if said else None
+        who = (
+            {i: name for i, name in enumerate(speakers, start=1)} if speakers
+            else {1: actor, 2: str(target) if target else "对方"}
+        )
         out = ["      · 对话："]
         for turn in dlg:
             if not isinstance(turn, dict):

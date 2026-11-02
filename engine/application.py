@@ -687,6 +687,7 @@ class NarrativeApplication:
             event_settings=EventSettings(
                 core_tension=world.analysis.core_tension,
                 narrative_theme=world.analysis.narrative_theme,
+                deck=world.analysis.event_deck,
                 enabled=self._config.engine.event_system_enabled,
                 check_interval=self._config.engine.event_check_interval,
                 max_events_per_window=self._config.engine.max_events_per_window,
@@ -702,6 +703,8 @@ class NarrativeApplication:
                 world.directory,
                 seconds_per_step=clock.config.seconds_per_step,
                 world_start_second_of_day=WorldTime.from_step(0, clock.config).elapsed_seconds,
+                check_seed=world.world_id,
+                economy=world.environment.economy,
             ),
             maintenance=CognitionMaintenance(
                 memory_decay_interval=self._config.engine.decay_interval,
@@ -716,6 +719,8 @@ class NarrativeApplication:
             trace_sink=self._container.trace_sink,
             start_event_seq=start_event_seq,
             fired_events=fired_events or (),
+            narration_enabled=self._config.engine.narration_enabled,
+            weather=world.weather,
         )
         return runtime
 

@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Any
 from agent.need import NeedState, NeedType, build_innate_needs
 from agent.personality import SECRET_LABEL, EmotionState, EmotionType, SoulLayer, parse_emotion_type
 from agent.relation import NEUTRAL_AFFECTION, NEUTRAL_TRUST
+from core.coerce import coerce_enum
+from core.interfaces.ability import Abilities
+from core.interfaces.economy import Economy
 from core.interfaces.action import ErrandOrder
 from core.interfaces.condition import BodyCondition
 from core.interfaces.directory import WorldDirectory
@@ -16,6 +19,8 @@ from core.interfaces.snapshot import WorldSnapshot
 from core.interfaces.world_config import WorldConfig
 from core.text import slugify
 from engine.clock import WorldTimeConfig
+from engine.event_deck import EventCard, deck_from_dicts
+from engine.weather import DEFAULT_CLIMATE, Climate, WeatherSystem
 
 if TYPE_CHECKING:
     from agent.agent import Agent
@@ -34,6 +39,10 @@ class WorldEntityType(str, Enum):
 
     ITEM     = "item"        # portable item
     LANDMARK = "landmark"    # stronghold / marker / notice: not portable, but its state can change
+    # Divisible: one pile per holder and per place, counted by ``WorldEntity.quantity``. Never
+    # seeded or spawned by an LLM; the build hands out each character's cash, and piles split and
+    # merge only through ``EnvironmentSystem.change_entity_state``.
+    MONEY    = "money"
 
     @property
     def is_takeable(self) -> bool:
@@ -43,7 +52,7 @@ class WorldEntityType(str, Enum):
         elsewhere. Missing it fails silently: ``is_takeable`` always False means the PHYSICAL judge prompt
         never offers ``seize``, and the contract "PHYSICAL is the only way to take an item" breaks.
         """
-        return self is WorldEntityType.ITEM
+        return self in (WorldEntityType.ITEM, WorldEntityType.MONEY)
 
 
 class EntityPresence(str, Enum):
@@ -101,6 +110,13 @@ class WorldEntity:
     # description only says what it looks like. Who can read it is decided by ``readable_by``, not
     # ``is_public``: seeing that it's there isn't reading what it says.
     content:        str = ""
+    # Money only: how much is in the pile. ``description`` spells the amount out for whoever may
+    # see it (``EnvironmentSystem`` keeps the two together).
+    quantity:       int = 0
+
+    @property
+    def is_money(self) -> bool:
+        return self.entity_type is WorldEntityType.MONEY
 
     # -- derived read-only placement views (single source of truth = presence) --
     @property
@@ -538,6 +554,12 @@ class ThemeAnalysis:
     world_entity_seeds: list[WorldEntitySeed] = field(default_factory=list)
     npc_seeds: list[NpcSeed] = field(default_factory=list)
     source_material: str = ""
+    # The climate the weather is drawn from; a world saved without one gets the default.
+    climate: Climate = DEFAULT_CLIMATE
+    # What money is called and what things cost; empty for a world without money.
+    economy: Economy = field(default_factory=Economy)
+    # Happenings this world is prone to, drawn by the event editor (engine.event_deck).
+    event_deck: tuple[EventCard, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -555,6 +577,9 @@ class ThemeAnalysis:
             "world_entity_seeds": [seed.as_dict() for seed in self.world_entity_seeds],
             "npc_seeds": [seed.as_dict() for seed in self.npc_seeds],
             "source_material": self.source_material,
+            "climate": self.climate.value,
+            "economy": self.economy.to_dict(),
+            "event_deck": [card.to_dict() for card in self.event_deck],
         }
 
     @classmethod
@@ -611,6 +636,9 @@ class ThemeAnalysis:
                 if isinstance(s, dict) and s.get("name")
             ],
             source_material=data.get("source_material", ""),
+            climate=coerce_enum(Climate, data.get("climate"), default=DEFAULT_CLIMATE),
+            economy=Economy.from_dict(data.get("economy")),
+            event_deck=deck_from_dicts(data.get("event_deck") or []),
         )
 
 
@@ -629,6 +657,10 @@ class AgentDefinition:
     initial_relations: list[RelationSeed] = field(default_factory=list)
     historical_memories: list[HistoricalEventSeed] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # The money he carries at step 0, in the world's unit; a pile in his hands from then on.
+    initial_cash: int = 0
+    # Ids of the world entity seeds in his hands at step 0 (``WorldEntitySeed.entity_id``).
+    carried: tuple[str, ...] = ()
 
     @property
     def is_main_character(self) -> bool:
@@ -651,6 +683,7 @@ class AgentDefinition:
             "life_goal": self.soul.life_goal,
             "secret": self.soul.secret,
             "hard_constraints": list(self.soul.hard_constraints),
+            "abilities": self.soul.abilities.to_dict(),
         }
 
     @property
@@ -680,6 +713,8 @@ class AgentDefinition:
             "initial_relations": [relation.as_dict() for relation in self.initial_relations],
             "historical_memories": [event.as_dict() for event in self.historical_memories],
             "metadata": dict(self.metadata),
+            "initial_cash": self.initial_cash,
+            "carried": list(self.carried),
         }
 
     @classmethod
@@ -721,6 +756,7 @@ class AgentDefinition:
             life_goal=sd.get("life_goal"),
             secret=sd.get("secret", ""),
             hard_constraints=sd.get("hard_constraints", []),
+            abilities=Abilities.from_dict(sd.get("abilities")),
             innate_needs=build_innate_needs(active, hidden),
         )
         ie = data.get("initial_emotion") or {}
@@ -753,6 +789,8 @@ class AgentDefinition:
                 HistoricalEventSeed(**e) for e in data.get("historical_memories", [])
             ],
             metadata=dict(data.get("metadata") or {}),
+            initial_cash=max(0, int(data.get("initial_cash") or 0)),
+            carried=tuple(str(c) for c in data.get("carried") or ()),
         )
 
 
@@ -771,6 +809,8 @@ class World:
     step_zero_snapshot: WorldSnapshot
     directory: WorldDirectory
     current_step: int = 0  # step the world resumes at (latest snapshot); 0 for a fresh build
+    # The sky as it stands at current_step; the runtime advances it.
+    weather: WeatherSystem | None = None
 
     def agent_list(self) -> list[Agent]:
         return list(self.agents.values())

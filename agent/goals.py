@@ -177,6 +177,15 @@ def is_due(goal: GoalEntity, step: int) -> bool:
     return goal.due_step is not None and goal.due_step <= step
 
 
+def agreed_times_reached(goals: Sequence[GoalEntity], step: int, *, since: int) -> List[GoalEntity]:
+    """Live goals whose agreed time has come at or before ``step`` but after ``since``: the
+    appointments that arrived while their owner wasn't deciding."""
+    return [
+        g for g in goals
+        if is_active_goal(g) and g.due_step is not None and since < g.due_step <= step
+    ]
+
+
 def is_past_allowance(goal: GoalEntity, step: int) -> bool:
     """The reaper's only test: the two clocks described at _SHORT_TERM_GOAL_STALL_STEPS.
     Same clock as goal_age_hint / goal_due_hint, so the mark the judge sees decides the reaping;

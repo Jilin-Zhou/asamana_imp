@@ -75,6 +75,12 @@ def test_narration_without_two_lanes_is_not_a_dialogue(tmp_path) -> None:
     assert extract_dialogues(WORLD, trace_dir=base) == []
 
 
+def test_a_group_talk_is_left_out_rather_than_judged_on_two_of_its_columns(tmp_path) -> None:
+    lanes = {**_LANES, "c": {"name": "丙", "text": "丙的人设。"}}
+    base = _write_trace(tmp_path, '{"dialogue": [{"speaker": 3, "line": "插一句"}]}', lanes=lanes)
+    assert extract_dialogues(WORLD, trace_dir=base) == []
+
+
 @pytest.mark.asyncio
 async def test_index_resolves_to_the_line_it_points_at_on_both_axes() -> None:
     r = _router(_Mock('{"reason": "r", "divergence": {"what": "谁传的假令", "enacted": "voiced"}, '

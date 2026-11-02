@@ -61,6 +61,8 @@ export const DEED_BODY: Record<DeedValue, DeedBody> = {
   // the pose would draw him still talking to a runner already gone. `target: null`: the
   // runner is an NPC, and this renderer poses no body without a mind — his answer is the walk.
   [Deed.errand]: { actor: "talk", target: null },
+  // TRADE is haggled face to face, like talk; it settles within the beat, so no sustain.
+  [Deed.trade]: { actor: "talk", target: null },
 };
 
 /**

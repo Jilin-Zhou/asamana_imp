@@ -68,6 +68,14 @@ python -m tuning audit <world-id> --scope mams,sams   # 只跑某些 scope
 
 只跑部分 scope 不会覆盖其他 scope 的已有结果，世界总分始终由全部结果重新汇总。结果保存在 `data/traces/<world_id>/audit/`。
 
+### 行动统计
+
+不调用模型、直接从快照统计一个世界的客观数字：各类行动的数量、成功率、未成事与被打断的次数，以及判定（掷骰）的五档结果分布。适合在改动前后各跑一次做对比。
+
+```bash
+python -m tuning stats <world-id>
+```
+
 ### 调整判分标准
 
 每个维度在每个 scope 下的判分依据写在 `tuning/audit_criteria.yaml`，改完重跑即可，不需要改代码。维度定义与权重在 `tuning/audit_metrics.py`。

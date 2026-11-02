@@ -26,6 +26,7 @@ const kept = (holder: string): Record<string, EntityView> => ({
     content: "",
     // step({ bornIds: [...] }) sets the real birth step, since only it knows the step number.
     created_step: 0,
+    quantity: 0,
   },
 });
 
@@ -41,6 +42,7 @@ const setDown = (where: string): Record<string, EntityView> => ({
     content: "",
     is_public: true,
     created_step: 0,
+    quantity: 0,
   },
 });
 

@@ -17,6 +17,7 @@ from engine.scene import SceneVisibility, SituationVoice, assemble_scene_context
 from providers.llm.mock import MockLLMProvider
 from world.models import EntityPresence, WorldEntity, WorldEntitySeed, WorldEntityType
 from core.interfaces.place import Place
+from tests.unit.check_fixtures import fixed_check
 
 SECRET = "明晨卯时，玄武门换防"
 CARVED = "敢有擅入者斩"
@@ -149,7 +150,7 @@ def test_the_physical_target_block_carries_no_content() -> None:
     letter = _letter(presence=EntityPresence.HELD, presence_ref="a1")
     env.register_entity(letter)
     router = LLMRouter({scene: MockLLMProvider() for scene in LLMScene})
-    executor = PhysicalExecutor(router, LiveWorldDirectory.from_agents({}, env))
+    executor = PhysicalExecutor(router, LiveWorldDirectory.from_agents({}, env), check_assessor=fixed_check())
     assert SECRET not in executor._entity_target_block(letter, actor_id="a2")
 
 

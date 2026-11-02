@@ -843,6 +843,7 @@ export class TiledWorldScene
     // The previous weather is retired, not deleted: it finishes falling while this step runs,
     // since a shower that ends between two frames never looks like weather ending.
     this.announcer.retireWeather();
+    this.announcer.setSky(step.weather);
     // A sustained pose (see holdPose) outlives its step and ends when the figure has nothing
     // to do; whoever will pose again this step keeps it until playDeed replaces it, so a long
     // job does not flicker to idle. The test is "will he be given a pose" (ask deedBody), not
@@ -1184,7 +1185,10 @@ export class TiledWorldScene
       this.faceSubject(tok, act);
       // The body acts for every kind of action — one table over the deed (deedPose.ts).
       this.body.playDeed(tok, act, this.tokens);
-      if (act.action_type === ActionType.talk) {
+      // A trade is haggled aloud like a talk; unlike a talk, its result (did it land) still
+      // gets a chip below.
+      const haggled = act.action_type === ActionType.trade;
+      if (act.action_type === ActionType.talk || haggled) {
         // No connector line: facing, the talk pose and alternating bubbles already say it.
         // An overhearer only turns to watch — a bubble or talk pose would make him a party to it.
         for (const oid of act.overheard_by ?? []) {
@@ -1198,9 +1202,11 @@ export class TiledWorldScene
         } else {
           await this.delayP(650);
         }
-        // No result chip for talk: the bubbles already render the exchange.
-        afterBeat(actIdx);
-        continue;
+        if (!haggled) {
+          // No result chip for talk: the bubbles already render the exchange.
+          afterBeat(actIdx);
+          continue;
+        }
       }
       // Non-talk: transient effect, then the intent caption, then the persistent result chip.
       if (act.action_type === ActionType.physical) physicalEffect(this, tok, act);

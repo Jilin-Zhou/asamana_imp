@@ -10,6 +10,7 @@ import type {
   MapTemplate,
   ThemePreset,
   StepEvent,
+  StepNarration,
   WorldGraph,
   WorldMeta,
 } from "../types";
@@ -94,6 +95,8 @@ export const api = {
   reset: (id: string) => req(`/api/worlds/${id}/reset`, { method: "POST" }),
 
   listSteps: (id: string) => req<number[]>(`/api/worlds/${id}/steps`),
+  // Every step's stage script, in step order; steps the narrator never wrote up are absent.
+  listNarration: (id: string) => req<StepNarration[]>(`/api/worlds/${id}/narration`),
   getStep: (id: string, step: number) =>
     req<StepEvent>(`/api/worlds/${id}/steps/${step}`),
   graph: (id: string, step?: number) =>

@@ -35,8 +35,15 @@ function entityChanged(prev: EntityView | undefined, next: EntityView): boolean 
     prev.presence !== next.presence ||
     prev.presence_ref !== next.presence_ref ||
     prev.name !== next.name ||
-    prev.state !== next.state
+    prev.state !== next.state ||
+    prev.quantity !== next.quantity
   );
+}
+
+/** What a thing is called on the map. A pile of money reads as its amount ("30两银子"), which
+ *  the backend spells out in its description; the currency alone says nothing. */
+function shownName(e: EntityView): string {
+  return e.entity_type === "money" && e.description ? e.description : e.name;
 }
 
 /**
@@ -198,7 +205,7 @@ export class EntityLayer {
           this.carriedBy.set(holderId, [
             ...(this.carriedBy.get(holderId) ?? []),
             {
-              name: e.name, state: e.state ?? "", concealed: e.is_public === false,
+              name: shownName(e), state: e.state ?? "", concealed: e.is_public === false,
               description: e.description ?? "", content: e.content ?? "",
             },
           ]);
@@ -388,7 +395,7 @@ export class EntityLayer {
     eid: string,
     e: EntityView,
   ): void {
-    this.layoutEntityLabel(marker, e.name, e.state);
+    this.layoutEntityLabel(marker, shownName(e), e.state);
     const prev = this.lastEntityStates[eid];
     if (prev && prev.state !== e.state) {
       this.host.floatNote(room.sx, room.sy - 26, `${e.name}：${prev.state}→${e.state}`, 0xd9a441);

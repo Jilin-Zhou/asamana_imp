@@ -84,10 +84,15 @@ class Situation:
 
     location_view: LocationView | None = None
     time_label: str = ""
+    # The sky in words ("外头下着大雨"); empty when the world has no weather.
+    weather: str = ""
 
     @classmethod
     def from_spatial(cls, spatial: "SpatialPerception") -> "Situation":
-        return cls(location_view=spatial.location_view, time_label=spatial.world_time_label)
+        return cls(
+            location_view=spatial.location_view, time_label=spatial.world_time_label,
+            weather=spatial.weather_label,
+        )
 
 
 @dataclass(frozen=True)
@@ -185,6 +190,7 @@ class SpatialPerception:
     world_time_label: str
     current_step: int
     world_time_hour: int = -1  # hour-of-day [0,23] from the clock; -1 = unknown
+    weather_label: str = ""    # the sky in words, the same for everyone (engine.weather)
     # agent_id → PerceivedPresence: the single source of truth for who is here and how they appear.
     # Don't split it into parallel structures keyed by the same ids: they drift. Assembled only by
     # ``engine.presence.attach_presence``. Key order is contract: the roster's #N binds to it.

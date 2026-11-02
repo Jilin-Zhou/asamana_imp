@@ -70,10 +70,12 @@ PHYSICAL_DEEDS: dict[str, str] = {
     "strike": "施加暴力伤害",
     "restrain": "动手但不为伤人：制止/擒抱/推搡/搀扶/救治",
     "seize": "把它拿到手上带走",
-    "relinquish": "把它交出手：放到此地，或交到某人手上",
+    # relinquish vs operate turns on whether the thing leaves his hands: tucking a held thing away
+    # on his own person is operate, or code sets it down on the ground.
+    "relinquish": "把它交出手、事后不再带在身上：放到此地，或交到某人手上",
     # operate vs destroy turns on whether the thing still exists afterward, not how violent the act
     # looks. Don't put destruction verbs in operate's description, or destroying never reaches destroy.
-    "operate": "就地操作它：开启/使用/改变其状态——事后它仍在",
+    "operate": "就地或在手上操作它：开启/使用/收藏/改变其状态——事后它仍在，仍在原处或原来那人手上",
     "destroy": "把它毁掉：烧毁/砸碎/撕毁——事后它不复存在",
 }
 
@@ -649,20 +651,26 @@ def vitality_line(
 
 
 def render_situation_header(situation, *, voice: SituationVoice) -> str:
-    """Situation header: one line saying when and where it is, injected at the start of cognition and judge prompts.
+    """Situation header: one line saying when and where it is and what the sky is doing, injected
+    at the start of cognition and judge prompts.
 
     Goes first in the user content, not in system: it changes every step and would break the
-    cacheable prefix. Either part may be missing and is then left out, never invented.
+    cacheable prefix. Any part may be missing and is then left out, never invented.
     """
     time_label = situation.time_label
+    weather = getattr(situation, "weather", "")
     if situation.location_view is None:
         if not time_label:
             return ""
-        return f"此刻是{time_label}。" if voice == SituationVoice.FIRST else f"当前时间：{time_label}。"
+        if voice == SituationVoice.FIRST:
+            return f"此刻是{time_label}，{weather}。" if weather else f"此刻是{time_label}。"
+        return f"当前时间：{time_label}；天气：{weather}。" if weather else f"当前时间：{time_label}。"
     place = render_location(situation.location_view)
     if voice == SituationVoice.FIRST:
-        return f"我此刻在{place}，当前时间为{time_label}。" if time_label else f"我此刻在{place}。"
-    return f"当前时间：{time_label}；当前地点：{place}。" if time_label else f"当前地点：{place}。"
+        sky = f"，{weather}" if weather else ""
+        return f"我此刻在{place}，当前时间为{time_label}{sky}。" if time_label else f"我此刻在{place}{sky}。"
+    sky = f"；天气：{weather}" if weather else ""
+    return f"当前时间：{time_label}；当前地点：{place}{sky}。" if time_label else f"当前地点：{place}{sky}。"
 
 
 def situation_location(situation) -> str:

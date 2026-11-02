@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Collection, List, Optional, Sequence
 
+from agent.goals import agreed_times_reached
 from agent.need import NEED_URGENT_INTENSITY
 from agent.personality import EMOTION_STRONG_INTENSITY
 from core.interfaces.urgency import Urgency
@@ -27,6 +28,7 @@ class CadenceReason(str, Enum):
     NEVER_DECIDED = "never_decided"  # cold start — has not thought once yet
     INTERRUPTED = "interrupted"      # it just broke off its own action to attend to something
     PRESSURE = "pressure"            # the pressure evaluator gave it an external goal
+    DUE = "due"                      # the agreed time of one of its goals has come
     NEED = "need"                    # a need is driving it
     EMOTION = "emotion"              # an emotion has it
     STARVED = "starved"              # nothing pressing, but it has gone too long
@@ -232,6 +234,11 @@ class AgentScheduler:
         # urgency, not mere non-emptiness (PRESSURE_ADMIT_URGENCY).
         if any(g.urgency >= PRESSURE_ADMIT_URGENCY for g in agent.pending_external_goals):
             return CadenceReason.PRESSURE
+
+        # An appointment arrived since he last thought: once, so he can keep it. Without this a
+        # character who set a time sits it out whenever no drive happens to be up that step.
+        if agreed_times_reached(state.short_term_goal_entities, step, since=state.last_decision_step):
+            return CadenceReason.DUE
 
         if self._max_need(agent) >= NEED_URGENT_INTENSITY:
             return CadenceReason.NEED

@@ -1,3 +1,4 @@
+import { skyText } from "../lib/weather";
 import type { StepEvent } from "../types";
 
 /**
@@ -42,6 +43,8 @@ export default function WorldClock({
       <div className={s.plate}>
         <span className={s.glyph}>◷</span>
         <span className={s.label}>{step.world_time.label}</span>
+        {/* The sky belongs with the hour: both are the world's own conditions. */}
+        {skyText(step.weather) && <span className="text-[11px] text-sky-200/80">{skyText(step.weather)}</span>}
       </div>
       <span className="rounded-md border border-slate-800 bg-slate-950/60 px-1.5 py-1 text-[10px] tabular-nums text-slate-500">
         第 {step.step} 步

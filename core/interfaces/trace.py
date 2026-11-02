@@ -48,6 +48,7 @@ class Stage(str, Enum):
     # question when observing (see engine/injection.Author).
     DIRECTOR = "director"    # human director: free text → injection plan / suggestions
     EVENT = "event"          # LLM event editor: pacing gate + authoring
+    NARRATION = "narration"  # stage narrator: the audience's script, never read by the world
     # No stage set on the context: a missing seam shows up here rather than vanishing.
     UNKNOWN = "unknown"
 
@@ -70,6 +71,7 @@ COGNITION_ORDER: tuple[Stage, ...] = (
     Stage.LONG_TERM_GOALS,
     Stage.DIRECTOR,
     Stage.EVENT,
+    Stage.NARRATION,
 )
 
 
@@ -89,6 +91,8 @@ BUILD_SCENE_ORDER: tuple[str, ...] = (
     "world_building",       # theme analysis
     "cast_design",
     "persona_generation",   # agent generation
+    "ability_design",
+    "event_deck_design",
     "need_goal_generation",  # initializer: needs + opening goals
 )
 

@@ -23,6 +23,12 @@ llm:
     cast_design:
       provider: dashscope
       model: qwen3.8-max
+    ability_design:
+      provider: dashscope
+      model: qwen3.8-max
+    event_deck_design:
+      provider: dashscope
+      model: qwen3.8-max
     world_building:
       provider: dashscope
       model: qwen3.8-max
