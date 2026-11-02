@@ -237,6 +237,8 @@ _DIALOGUE_SYSTEM: str = f"""\
   东西，只能说出口、讲条件，此刻东西仍在原主手上。
 - **各栏说法相左时，那不是要你调和的错漏**——那正是这场交谈的关节。他们各自都当自己那套是真的，
   把这个演出来，别把它抹平成一套说得通的说法。允许他们误解、话不投机乃至不欢而散。
+- **只有下面分了栏的人开口。** 现场里的其他人、此处听人吩咐做事的人一概不插话；谁想说话，得自己走过来，
+  那时他会有自己的一栏。
 - **有人中途走过来加入时**（见【中途加入】；没有这一栏就略过这一条）：原先在谈的人怎样待他，由各自的处境、
   彼此关系和正在谈的事定，当着他还谈不谈原来的事、谈到几分，也由他们定。别当他没来过，也别让他一来就
   把整场话头抢走；他插不插得上话、碰不碰钉子，看他自己那一栏和别人怎么看他。
@@ -335,6 +337,7 @@ class SocialExecutor(ActionExecutor):
             description=action.action_description or "交谈",
             target=action.target,
             expected_outcome=action.expected_outcome,
+            step=step,
         )
         state.listener_ids = [pid for pid in state.listener_ids if pid != joiner_id]
         location = observe_location(environment, joiner_id)
@@ -391,7 +394,8 @@ class SocialExecutor(ActionExecutor):
             opening_observations=observed_here(environment, action.agent_id, opening),
             target=action.target,
             expected_outcome=action.expected_outcome,
-            listener_ids=_present_listeners(
+            # Drawn aside, nobody is in earshot, named or not.
+            listener_ids=[] if private else _present_listeners(
                 action.target.reached_agents, environment=environment, agents=agents,
                 anchor_id=action.agent_id, exclude={action.agent_id, target_ids[0]},
             ),
@@ -716,7 +720,6 @@ class SocialExecutor(ActionExecutor):
         talkers = _name_list([p.name for p in parties])
         location = observe_location(environment, initiator_id) if environment is not None else "此处"
         elapsed = state.estimated_steps - state.remaining_steps
-        elapsed_label = describe_duration(elapsed, self._seconds_per_step)
         breaker = (
             self._directory.agent_name(interrupted_agent_id)
             if interrupted_agent_id and interrupted_agent_id in state.participant_ids
@@ -758,6 +761,10 @@ class SocialExecutor(ActionExecutor):
             )
             relation_block = await self._present_relations_block(agent, environment)
             role_line, head = self._role_line(parties, i)
+            # A walk-in lived through only the part since he came over.
+            joining = state.joined.get(party.agent_id)
+            lived = min(elapsed, step - joining.step) if joining is not None else elapsed
+            elapsed_label = describe_duration(max(0, lived), self._seconds_per_step)
             factual = await self._interrupt_summary(
                 agent=agent, role_line=role_line, fallback_head=head, purpose=state.purpose,
                 thought=thought, cause=cause, elapsed_label=elapsed_label,

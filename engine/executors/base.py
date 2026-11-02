@@ -147,6 +147,8 @@ class Joining:
     description: str
     target: ActionTarget
     expected_outcome: str = ""
+    # The step he walked in on: what he lived through starts there, not at the execution's start.
+    step: int = 0
 
 
 @dataclass(frozen=True)

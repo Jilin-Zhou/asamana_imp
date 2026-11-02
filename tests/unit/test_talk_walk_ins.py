@@ -7,6 +7,7 @@ conscript), and the conversation then voices, remembers and moves relations for 
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -264,3 +265,114 @@ async def test_the_narrator_is_told_a_talk_was_drawn_aside(container) -> None:
     await executor.complete(state, 2, agents=agents, environment=env, message_system=None)
 
     assert "甲把乙拉到一旁，背着旁人低声说；旁人听不见。" in _joined(provider.call_history[before])
+
+
+@pytest.mark.asyncio
+async def test_a_talk_meant_to_be_private_never_walks_into_an_open_one(container) -> None:
+    env, agents, rt = _palace(container, "world-private-joiner", {"agent-a": "李世民", "agent-b": "常何", "agent-x": "房玄龄"})
+    a, b, x = agents.values()
+    planned = [
+        ("main", a, _plan_for(a, _talk("agent-a", "agent-b", "商议值守"), env)),
+        ("main", b, _plan_for(b, None, env, decision_status=DecisionStatus.NOT_SCHEDULED)),
+        ("main", x, _plan_for(x, _aside("agent-x", "agent-b", "私下托付要命的事"), env)),
+    ]
+
+    await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
+
+    assert rt._executor_registry.get_active_for_agent("agent-a").participant_ids == ["agent-a", "agent-b"]  # noqa: SLF001
+    rejected = rt._executor_registry.get_active_for_agent("agent-x").extra["completed_result"]  # noqa: SLF001
+    assert "常何正与李世民交谈" in rejected.outcome
+
+
+@pytest.mark.asyncio
+async def test_whoever_went_up_to_a_walk_in_is_released_when_he_is_carried_off(container) -> None:
+    from engine.arbiter import _FOILED_MISS_PRIORITY_THRESHOLD as N
+
+    env, agents, rt = _two_rooms_with(
+        container, "world-walk-in-via",
+        {"agent-a": "李世民", "agent-b": "常何", "agent-j": "尉迟恭", "agent-x": "房玄龄", "agent-d": "侯君集"},
+    )
+    a, b, j, x, d = agents.values()
+    carry = AgentAction(agent_id="agent-d", step=1, action_type=ActionType.MOVE, action_description="拽走尉迟恭",
+                        estimated_steps=1, target=ActionTarget(acts_on=[Ref.place("garden")], claims=[Ref.agent("agent-j")]))
+    planned = [
+        ("main", a, _plan_for(a, _talk("agent-a", "agent-b", "商议"), env, foiled_misses=N + 3)),
+        ("main", j, _plan_for(j, _talk("agent-j", "agent-b", "插一句"), env, foiled_misses=N + 2)),
+        ("main", x, _plan_for(x, _talk("agent-x", "agent-j", "找尉迟恭说事"), env, foiled_misses=N + 1)),
+        ("main", b, _plan_for(b, None, env, decision_status=DecisionStatus.NOT_SCHEDULED)),
+        ("main", d, _plan_for(d, carry, env)),
+    ]
+
+    await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
+
+    registry = rt._executor_registry  # noqa: SLF001
+    assert registry.get_active_for_agent("agent-a").participant_ids == ["agent-a", "agent-b"]
+    assert registry.get_active_for_agent("agent-j").initiator_id == "agent-d"
+    rejected = registry.get_active_for_agent("agent-x").extra["completed_result"]
+    assert "尉迟恭正要动身离开" in rejected.outcome
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_talk_frees_whoever_its_walk_ins_turned_away(container) -> None:
+    """The talk filled up with walk-ins turns the next one away; when the talk is revoked, that
+    refusal never happened, and he gets to talk after all."""
+    from engine.arbiter import _FOILED_MISS_PRIORITY_THRESHOLD as N
+
+    env, agents, rt = _two_rooms_with(
+        container, "world-walk-in-revoked-full",
+        {"agent-a": "李世民", "agent-b": "常何", "agent-j": "尉迟恭", "agent-k": "侯君集",
+         "agent-y": "房玄龄", "agent-d": "杜如晦"},
+    )
+    a, b, jj, k, y, d = agents.values()
+    carry = AgentAction(agent_id="agent-d", step=1, action_type=ActionType.MOVE, action_description="拽走常何",
+                        estimated_steps=1, target=ActionTarget(acts_on=[Ref.place("garden")], claims=[Ref.agent("agent-b")]))
+    planned = [
+        ("main", a, _plan_for(a, _talk("agent-a", "agent-b", "商议"), env, foiled_misses=N + 4)),
+        ("main", jj, _plan_for(jj, _talk("agent-j", "agent-b", "插一句"), env, foiled_misses=N + 3)),
+        ("main", k, _plan_for(k, _talk("agent-k", "agent-b", "也插一句"), env, foiled_misses=N + 2)),
+        ("main", y, _plan_for(y, _talk("agent-y", "agent-k", "找侯君集说事"), env, foiled_misses=N + 1)),
+        ("main", b, _plan_for(b, None, env, decision_status=DecisionStatus.NOT_SCHEDULED)),
+        ("main", d, _plan_for(d, carry, env)),
+    ]
+
+    await rt._arbiter.arbitrate(planned, agents, 1, set())  # noqa: SLF001
+
+    talk = rt._executor_registry.get_active_for_agent("agent-y")  # noqa: SLF001
+    assert talk.initiator_id == "agent-y" and "agent-k" in talk.participant_ids
+
+
+@pytest.mark.asyncio
+async def test_a_talk_drawn_aside_has_no_listeners(container) -> None:
+    agents = {aid: _make_agent(container, world_id="w", agent_id=aid, name=n, is_main=True)
+              for aid, n in (("agent-a", "甲"), ("agent-b", "乙"), ("agent-c", "丙"))}
+    env = _make_environment()
+    env.place_agent(agent_id="agent-c", location_id="hall")
+    executor = SocialExecutor(container.llm_router, _directory(agents), seconds_per_step=3600)
+    action = _aside("agent-a", "agent-b", "低声商议")
+    action.target = ActionTarget(acts_on=[Ref.agent("agent-b")], claims=[Ref.agent("agent-b")], reaches=[Ref.agent("agent-c")])
+
+    state = await executor.start(action, 1, agents=agents, environment=env, message_system=None)
+
+    assert state.listener_ids == []
+
+
+@pytest.mark.asyncio
+async def test_a_walk_in_remembers_only_the_part_he_was_there_for(container) -> None:
+    provider, agents, env, executor, state = await _three_way(container)
+    provider.fixed_response = '{"fact": "话没说完。"}'
+    # Begun at step 1 for four steps; he walked in on step 3 and it breaks off on step 4.
+    state.estimated_steps, state.remaining_steps = 4, 1
+    state.joined["agent-c"] = replace(state.joined["agent-c"], step=3)
+    before = len(provider.call_history)
+
+    await executor.interrupt(state, 4, agents=agents, environment=env, interrupted_agent_id="agent-a")
+
+    prompts = [_joined(m) for m in provider.call_history[before:]]
+    assert any("我走过去找乙，加了进来" in p and "已谈了约1小时" in p for p in prompts)
+    assert any("是我主动找乙谈的" in p and "已谈了约3小时" in p for p in prompts)
+
+
+def test_only_the_speakers_with_a_column_may_talk() -> None:
+    from engine.executors.social import _DIALOGUE_SYSTEM
+
+    assert "只有下面分了栏的人开口" in _DIALOGUE_SYSTEM

@@ -76,10 +76,12 @@ class _Join:
     """A body walking up to someone inside an execution of the same act, to join it (see
     ``ActionExecutor.admits_joiner``). Booked at adjudication, landed after every admission."""
 
-    # Whom he went up to; whatever execution that body is in at landing is the one joined.
+    # A body inside the host; whatever execution that body is in at landing is the one joined.
     host_body: str
     # The host's identity in the books: this step's admission owner, or the ongoing execution id.
     host_key: str
+    # Whom he went up to: host_body, or someone booked to walk in himself.
+    via: str
     # Why he is turned away after all if the host is gone by landing.
     reason: str
 
@@ -297,11 +299,11 @@ class ExecutionArbiter:
         reached: set[str] = set()
         requeued: set[str] = set()
 
-        def release_joins(host_key: str) -> None:
-            """Unbook those walking into a host that won't be there: each is adjudicated again,
-            or turned away if already re-queued once."""
+        def release_joins(*, host_key: str | None = None, via: str | None = None) -> None:
+            """Unbook those walking into a host that won't be there, or up to someone taken away:
+            each is adjudicated again, or turned away if already re-queued once."""
             for pid, join in list(joins.items()):
-                if join.host_key != host_key:
+                if join.host_key != host_key and join.via != via:
                     continue
                 del joins[pid]
                 consumed.discard(pid)
@@ -336,13 +338,13 @@ class ExecutionArbiter:
                     queue.append(pid_plan)
             # Re-adjudicate those turned away by this action: it never happened, and a stale
             # "he is talking with someone" would enter their first-person memory.
-            members = {owner, *adm.co_participants}
+            members = {owner, *adm.co_participants, *(p for p, j in joins.items() if j.host_key == owner)}
             for pid, blockers in list(blocked_by.items()):
                 if pid in denied and pid not in requeued and blockers & members:
                     del denied[pid], blocked_by[pid]
                     requeued.add(pid)
                     queue.append(plans_by_id[pid])
-            release_joins(owner)
+            release_joins(host_key=owner)
             logger.info(
                 "admission_revoked",
                 extra={
@@ -468,8 +470,10 @@ class ExecutionArbiter:
             if seize:
                 seized = set(committed)
                 for pid in committed:
-                    # Booked to walk into something that hasn't landed: nothing to tear down.
+                    # Booked to walk into something that hasn't landed: nothing to tear down, but
+                    # whoever went up to him finds him gone.
                     if joins.pop(pid, None) is not None:
+                        release_joins(via=pid)
                         continue
                     owner = claimed_by.get(pid) or (pid if pid in admissions else None)
                     if owner is not None and owner in admissions:
@@ -479,7 +483,7 @@ class ExecutionArbiter:
                         # Tearing him out ends that execution, so nobody walks into it.
                         ongoing = self._executor_registry.get_active_for_agent(pid)
                         if ongoing is not None:
-                            release_joins(ongoing.execution_id)
+                            release_joins(host_key=ongoing.execution_id)
 
             admissions[agent_id] = _Admission(
                 plan=plan, action=plan.action, executor=executor,
@@ -502,9 +506,10 @@ class ExecutionArbiter:
         joins: dict[str, _Join],
     ) -> _Join | None:
         """The booking for walking into the execution ``committed`` is in, or ``None`` if it is
-        another act or its executor admits nobody more. Party size counts those already booked;
-        someone booked to walk in himself is met in the execution he is walking into."""
-        if len(committed) != 1:
+        another act, its executor admits nobody more, or it is breaking up this step. Party size
+        counts those already booked; someone booked to walk in himself is met in the execution he
+        is walking into. A talk meant to be private never walks into another."""
+        if len(committed) != 1 or is_private(action):
             return None
         reason = self._busy_reason(committed[0], admissions, claimed_by, joins)
         body = joins[committed[0]].host_body if committed[0] in joins else committed[0]
@@ -519,12 +524,15 @@ class ExecutionArbiter:
             ongoing = self._executor_registry.get_active_for_agent(body)
             if ongoing is None or ongoing.action_type is not action.action_type:
                 return None
+            # Someone in it was taken earlier this step: it ends at landing.
+            if any(p in claimed_by for p in ongoing.participant_ids):
+                return None
             host = ongoing
             host_key, parties = ongoing.execution_id, len(ongoing.participant_ids)
         parties += sum(1 for join in joins.values() if join.host_key == host_key)
         if not executor.admits_joiner(host, parties):
             return None
-        return _Join(host_body=body, host_key=host_key, reason=reason)
+        return _Join(host_body=body, host_key=host_key, via=committed[0], reason=reason)
 
     async def _enact(
         self,
