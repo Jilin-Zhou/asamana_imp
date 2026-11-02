@@ -119,3 +119,12 @@ async def test_an_act_in_the_open_is_told_as_before(container, monkeypatch) -> N
     assert result.observations and [e.agent_id for e in result.target_effects] == ["agent-b"]
     assert result.entity_state_changes[0].perception
     assert seen["covert_note"] == "" and "暗中下手" not in assessor.calls[0]["details"]
+
+
+def test_keeping_a_held_thing_on_oneself_is_not_letting_it_go() -> None:
+    """Relinquish and operate split on whether the thing leaves his hands: a judge that read
+    "藏好" as relinquish set the thing down on the ground while the story had it on his person."""
+    from core.prompts import PHYSICAL_DEEDS
+
+    assert "事后不再带在身上" in PHYSICAL_DEEDS["relinquish"]
+    assert "仍在原处或原来那人手上" in PHYSICAL_DEEDS["operate"]

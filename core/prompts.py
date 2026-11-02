@@ -70,10 +70,12 @@ PHYSICAL_DEEDS: dict[str, str] = {
     "strike": "施加暴力伤害",
     "restrain": "动手但不为伤人：制止/擒抱/推搡/搀扶/救治",
     "seize": "把它拿到手上带走",
-    "relinquish": "把它交出手：放到此地，或交到某人手上",
+    # relinquish vs operate turns on whether the thing leaves his hands: tucking a held thing away
+    # on his own person is operate, or code sets it down on the ground.
+    "relinquish": "把它交出手、事后不再带在身上：放到此地，或交到某人手上",
     # operate vs destroy turns on whether the thing still exists afterward, not how violent the act
     # looks. Don't put destruction verbs in operate's description, or destroying never reaches destroy.
-    "operate": "就地操作它：开启/使用/改变其状态——事后它仍在",
+    "operate": "就地或在手上操作它：开启/使用/收藏/改变其状态——事后它仍在，仍在原处或原来那人手上",
     "destroy": "把它毁掉：烧毁/砸碎/撕毁——事后它不复存在",
 }
 
