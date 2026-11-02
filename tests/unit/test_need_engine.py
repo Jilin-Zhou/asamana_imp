@@ -2848,3 +2848,12 @@ async def test_the_recent_history_block_says_when_each_thing_ended() -> None:
 
     assert "  - （昨日）请动裴寂出面" in captured["user"]
     assert "  - （几小时前）取走那封密信" in captured["user"]
+
+
+def test_the_judge_knows_a_named_spot_can_lie_inside_the_place() -> None:
+    """A place is a wide area; a goal naming a spot inside it is met there. Without this the
+    judge failed goals like 「去某处衙署对账」 for a character who did it in the market around it."""
+    from agent.need import _GOAL_EVALUATION_SYSTEM
+
+    assert "所给的地点是一大片地方" in _GOAL_EVALUATION_SYSTEM
+    assert "不因结果没写出那个小去处判 failed" in _GOAL_EVALUATION_SYSTEM
