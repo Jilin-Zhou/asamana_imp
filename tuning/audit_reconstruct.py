@@ -404,6 +404,9 @@ def _fold_action(s: dict[str, Any], c: StageCall, out: dict, agent_name: str) ->
     # A checked action's result is decided by the roll, not by anything in the judge's output.
     if tier := c.extra.get("check_tier"):
         fields["check_tier"] = tier
+    # The dialogue numbers its speakers by their lanes, in order: keep the names to read it by.
+    if "dialogue" in fields and isinstance(lanes := c.extra.get("dialogue_lanes"), dict):
+        fields["speakers"] = [str((lane or {}).get("name") or "") for _k, lane in sorted(lanes.items())]
     if fields:
         whose = {k: v for k, v in (("did", c.extra.get("action_description")),
                                    ("initiator", c.extra.get("action_initiator")),

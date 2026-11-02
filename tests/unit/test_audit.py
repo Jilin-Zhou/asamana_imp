@@ -1612,3 +1612,21 @@ def test_init_keys_on_the_cast_and_shows_the_tier() -> None:
     assert "没有生成人设" in block   # and says what it's missing
 
 
+
+
+def test_a_group_talk_is_read_with_every_speakers_name() -> None:
+    """The dialogue numbers speakers by lane; the call records the lanes, so a third speaker is
+    named, and so is the initiator when the audited agent is someone else."""
+    from tuning.judge_audit import _mams_script_lines
+
+    talk = _call("action", scene="agent_action_narration",
+                 out={"dialogue": [{"speaker": 1, "line": "今夜谁当值？"},
+                                   {"speaker": 3, "line": "末将也想知道。"}]},
+                 extra={"action_owner": "乙",
+                        "dialogue_lanes": {"a": {"name": "甲", "text": ""}, "b": {"name": "乙", "text": ""},
+                                           "c": {"name": "丙", "text": ""}}})
+    s = _sum([talk], name="乙")
+
+    lines = _mams_script_lines("乙", s)
+    assert any("甲：今夜谁当值？" in line for line in lines)
+    assert any("丙：末将也想知道。" in line for line in lines)
