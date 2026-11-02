@@ -274,8 +274,7 @@ class ExecutionProcessor:
         await self._land_results_grouped(exec_states, results_by_exec, agents_dict, step)
         return results_by_exec
 
-    @staticmethod
-    def _result_conflict_keys(result: ActionResult) -> set[str]:
+    def _result_conflict_keys(self, result: ActionResult) -> set[str]:
         """What one result changes when it lands; results with disjoint keys may land
         concurrently.
 
@@ -288,6 +287,11 @@ class ExecutionProcessor:
             keys.add(effect.agent_id)
         for change in result.entity_state_changes:
             keys.add("item:" + change.entity_id)
+            # A pile of money is a purse: earnings and trades name it so, and under two names
+            # a theft of it and earnings into it would land in either order.
+            pile = self._environment.get_entity(change.entity_id)
+            if pile is not None and pile.is_money:
+                keys.update("purse:" + holder for holder in (pile.owner_id, change.owner_id) if holder)
         for transfer in result.transfers:
             keys.update(
                 {"item:" + transfer.entity_id} if transfer.entity_id

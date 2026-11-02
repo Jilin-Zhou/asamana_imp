@@ -110,15 +110,18 @@ class WorkExecutor(ActionExecutor):
         self._checks = check_assessor
         self._seconds_per_step = seconds_per_step
         self._economy = economy if economy is not None else Economy()
-        # World constants, so they sit in the system prefix; a world without money asks nothing.
+        # World constants, so they sit in the system prefix; a world where nothing can be earned
+        # asks nothing. The cap is stated, or the memory would keep a sum the purse never got.
+        self._earn_cap = self._economy.most_one_job_earns()
+        unit = self._economy.unit or self._economy.currency
         self._earned_rule = (
             f"""- earned:这段工夫若是做营生、给人干活(卖货、行医、说书、帮工之类),从外头的主顾那里实际
-  收到的钱数,按{self._economy.unit or self._economy.currency}计的整数;要和这一回的结果、花掉的时间相称,
+  收到的钱数,按{unit}计的整数,一回至多 {self._earn_cap}{unit};要和这一回的结果、花掉的时间相称,
   参照行情:{self._economy.price_reference() or "无"}。挣到了钱,fact 里写明挣了多少。
   不是营生、或分文未得,填 0;东西做出来还没卖掉的,也是 0。
   外头的主顾是没名没姓、来去一趟的人(过路客、病家、听书的);替有名有姓的人干活,填 0。
 """
-            if self._economy.has_money else ""
+            if self._earn_cap else ""
         )
         self._paid_by_others_rule = (
             "- **不能替有名有姓的人掏钱**:替现场里的人、或我认得的人干活,他给不给工钱、给多少,"
@@ -127,8 +130,7 @@ class WorkExecutor(ActionExecutor):
             if self._economy.has_money else ""
         )
         self._earned_field = (
-            f'"earned": 整数（按{self._economy.unit or self._economy.currency}计；没挣到填 0）, '
-            if self._economy.has_money else ""
+            f'"earned": 整数（按{unit}计；没挣到填 0）, ' if self._earn_cap else ""
         )
 
     def _outcome(self, agent_id: str, purpose: str, location: str, *, succeeded: bool) -> str:
@@ -453,13 +455,13 @@ class WorkExecutor(ActionExecutor):
         )
 
     def _earned(self, raw: object) -> int:
-        if not self._economy.has_money:
+        if not self._earn_cap:
             return 0
         try:
             amount = int(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return 0
-        return max(0, min(amount, self._economy.most_one_job_earns()))
+        return max(0, min(amount, self._earn_cap))
 
     async def _generate_outcome(
         self,
@@ -618,7 +620,7 @@ class WorkExecutor(ActionExecutor):
                     # + product_carried (~3) + outcome (≤40 ≈ 60) + observation (≤30 ≈ 45)
                     # + why (≤20 ≈ 30) + structure for 13 fields (~65) ≈ 680, plus earned (~3 + ~5
                     # structure) in a world with money.
-                    max_tokens=output_budget(688 if self._economy.has_money else 680),
+                    max_tokens=output_budget(688 if self._earn_cap else 680),
                 json_mode=True,
                 )
             data = extract_json(response.content)

@@ -186,3 +186,45 @@ def test_a_character_knows_where_money_comes_from_and_where_it_goes() -> None:
         _make_personality(), _make_packet(), _ACTION_SPACE,
     )
     assert "钱的来路" not in plain
+
+
+def test_the_cap_is_never_below_three_days_living_and_nothing_is_earned_without_a_scale() -> None:
+    cheap = Economy(currency="钱", unit="文", prices=(PriceReference("一碗面", 5),), daily_cost=50)
+    assert cheap.most_one_job_earns() == 150
+    assert Economy(currency="钱", unit="文").most_one_job_earns() == 0
+    assert Economy().most_one_job_earns() == 0
+
+
+@pytest.mark.asyncio
+async def test_the_narrator_is_told_the_cap_so_memory_and_purse_agree(container) -> None:
+    _result, prompt = await _work(container, _ECONOMY, 80)
+    assert "一回至多 600文" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_world_with_money_but_no_scale_asks_for_no_earnings(container) -> None:
+    result, prompt = await _work(container, Economy(currency="钱", unit="文"), 80)
+    assert result.earned == 0 and "earned" not in prompt
+
+
+def test_a_pile_of_money_and_earnings_into_it_land_in_one_group() -> None:
+    """A theft of a purse and earnings into the same purse must land in order, not race."""
+    from core.interfaces.action import EntityStateChange
+
+    env = EnvironmentSystem(economy=_ECONOMY)
+    env.add_money(50, holder_id="agent-a")
+    pile = env.purse_of("agent-a")
+    processor = ExecutionProcessor(
+        executor_registry=ActionExecutorRegistry(), environment=env, message_system=None,  # type: ignore[arg-type]
+        directory=_directory(),
+    )
+    theft = ActionResult(
+        action=AgentAction(agent_id="agent-t", step=1, action_type=ActionType.PHYSICAL, action_description="顺走钱袋"),
+        expected_outcome="", outcome="", succeeded=True,
+        entity_state_changes=[EntityStateChange(entity_id=pile.entity_id, owner_id="agent-t")],
+    )
+    earning = ActionResult(
+        action=AgentAction(agent_id="agent-a", step=1, action_type=ActionType.WORK, action_description="卖饼"),
+        expected_outcome="", outcome="", succeeded=True, earned=30,
+    )
+    assert processor._result_conflict_keys(theft) & processor._result_conflict_keys(earning)  # noqa: SLF001

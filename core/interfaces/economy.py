@@ -48,9 +48,10 @@ class Economy:
         return self.has_money and self.daily_cost > 0
 
     def most_one_job_earns(self) -> int:
-        """The most a single piece of paid work brings in: the dearest thing on the price list,
-        or a few days' living when there is no list."""
-        return max([p.price for p in self.prices] or [self.daily_cost * 3])
+        """The most a single piece of paid work brings in: the dearest thing on the price list or
+        three days' living, whichever is more; 0 when the world gives neither, and nothing can be
+        earned."""
+        return max([p.price for p in self.prices] + [self.daily_cost * 3]) if self.has_money else 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
